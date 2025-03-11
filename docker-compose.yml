@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+  discord-bot:
+    build: .
+    volumes:
+      - ./app:/app
+      - ./logs:/app/logs
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+      - ENABLED_CHANNEL_IDS=${ENABLED_CHANNEL_IDS:-}
+      - KEEP_ALIVE_ENABLED=${KEEP_ALIVE_ENABLED:-true}
+      - KEEP_ALIVE_INTERVAL=${KEEP_ALIVE_INTERVAL:-30}
+    restart: unless-stopped
