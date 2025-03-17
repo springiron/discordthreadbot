@@ -10,12 +10,31 @@ import os
 import signal
 import sys
 
-# .envファイルがある場合は読み込む
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+# 環境変数の読み込み処理
+def load_environment_variables():
+    """環境変数を.envファイルまたはシステム環境変数から読み込む"""
+    env_file_loaded = False
+    
+    # .envファイルがある場合は読み込む
+    try:
+        from dotenv import load_dotenv
+        env_file_loaded = load_dotenv()
+        if env_file_loaded:
+            print(".envファイルから環境変数を読み込みました")
+        else:
+            print(".envファイルが見つからないか読み込めませんでした。システム環境変数を使用します")
+    except ImportError:
+        print("python-dotenvがインストールされていません。システム環境変数のみを使用します")
+    
+    # BOT_TOKENの確認
+    bot_token = os.environ.get("DISCORD_BOT_TOKEN")
+    if not bot_token:
+        print("警告: DISCORD_BOT_TOKENが設定されていません")
+    
+    return env_file_loaded
+
+# 環境変数を読み込む
+load_environment_variables()
 
 from bot.client import ThreadBot
 from config import BOT_TOKEN, ENABLED_CHANNEL_IDS, KEEP_ALIVE_ENABLED, KEEP_ALIVE_INTERVAL
@@ -43,7 +62,7 @@ async def main():
     
     # トークンの確認
     if not BOT_TOKEN:
-        logger.error("BOT_TOKENが設定されていません。環境変数を確認してください。")
+        logger.error("DISCORD_BOT_TOKENが設定されていません。.envファイルまたはKoyebの環境変数で設定してください。")
         return
         
     # トークンの先頭部分をログに出力（セキュリティのため全てではない）

@@ -8,7 +8,9 @@ import os
 from typing import List, Dict, Any, Set
 
 # Discord Bot Token (環境変数から取得)
-BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+# main.pyとの整合性のため、変数名をDISCORD_BOT_TOKENに統一
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+BOT_TOKEN = DISCORD_BOT_TOKEN  # 後方互換性のため
 
 # スレッド自動アーカイブ時間 (単位: 分)
 THREAD_AUTO_ARCHIVE_DURATION = 10080  # 1週間 = 60分 × 24時間 × 7日 = 10080分
@@ -36,7 +38,7 @@ ENABLED_CHANNEL_IDS: Set[int] = set()
 # チャンネルIDの文字列が存在する場合、整数のセットに変換
 if ENABLED_CHANNEL_IDS_STR:
     try:
-        ENABLED_CHANNEL_IDS = {int(channel_id.strip()) for channel_id in ENABLED_CHANNEL_IDS_STR.split(",")}
+        ENABLED_CHANNEL_IDS = {int(channel_id.strip()) for channel_id in ENABLED_CHANNEL_IDS_STR.split(",") if channel_id.strip()}
     except ValueError:
         print("警告: ENABLED_CHANNEL_IDSの形式が正しくありません。数値のカンマ区切りリストを指定してください。")
 
