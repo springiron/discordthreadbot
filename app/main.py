@@ -40,18 +40,22 @@ from bot.client import ThreadBot
 from config import BOT_TOKEN, ENABLED_CHANNEL_IDS, KEEP_ALIVE_ENABLED, KEEP_ALIVE_INTERVAL
 from utils.logger import setup_logger
 from utils.keep_alive import KeepAlive
+from utils.health_check import HealthCheckServer
 
 logger = setup_logger(__name__)
-# キープアライブインスタンスをグローバル変数として保持
+# グローバル変数としてインスタンスを保持
 keep_alive_instance = None
+health_check_server = None
 
 def handle_exit(signum, frame):
     """終了シグナルを適切に処理する"""
     logger.info("終了シグナルを受信しました。Botを正常に終了します。")
-    # キープアライブを停止
-    global keep_alive_instance
+    # キープアライブとヘルスチェックサーバーを停止
+    global keep_alive_instance, health_check_server
     if keep_alive_instance:
         keep_alive_instance.stop()
+    if health_check_server:
+        health_check_server.stop()
     sys.exit(0)
 
 async def main():
@@ -76,13 +80,17 @@ async def main():
         logger.warning("有効なチャンネルIDが設定されていません。すべてのチャンネルで動作します。")
     
     # キープアライブ機能の開始
-    global keep_alive_instance
+    global keep_alive_instance, health_check_server
     if KEEP_ALIVE_ENABLED:
         logger.info(f"キープアライブ機能を有効化します (間隔: {KEEP_ALIVE_INTERVAL}分)")
         keep_alive_instance = KeepAlive(interval_minutes=KEEP_ALIVE_INTERVAL)
         keep_alive_instance.start()
     else:
         logger.info("キープアライブ機能は無効化されています")
+        
+    # ヘルスチェックサーバーの開始
+    health_check_server = HealthCheckServer(port=8080)
+    health_check_server.start()
     
     # Botインスタンスを作成
     bot = ThreadBot()
@@ -98,9 +106,11 @@ async def main():
         await bot.close()
         raise
     finally:
-        # Botが終了する際にキープアライブも停止
+        # Botが終了する際にキープアライブとヘルスチェックサーバーも停止
         if keep_alive_instance:
             keep_alive_instance.stop()
+        if health_check_server:
+            health_check_server.stop()
 
 if __name__ == "__main__":
     # Python 3.10以降はasyncio.runを使用

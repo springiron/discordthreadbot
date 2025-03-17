@@ -3,6 +3,8 @@ version: '3'
 services:
   discord-bot:
     build: .
+    ports:
+      - "8080:8080"
     volumes:
       - ./app:/app
       - ./logs:/app/logs
@@ -12,4 +14,5 @@ services:
       - ENABLED_CHANNEL_IDS=${ENABLED_CHANNEL_IDS:-}
       - KEEP_ALIVE_ENABLED=${KEEP_ALIVE_ENABLED:-true}
       - KEEP_ALIVE_INTERVAL=${KEEP_ALIVE_INTERVAL:-30}
+      - PORT=${PORT:-8080}
     restart: unless-stopped
