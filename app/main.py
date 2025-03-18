@@ -112,16 +112,29 @@ async def main():
         if health_check_server:
             health_check_server.stop()
 
+# ===============================
+# Bot 実行
+# ===============================
 if __name__ == "__main__":
-    # Python 3.10以降はasyncio.runを使用
-    if sys.version_info >= (3, 10):
-        asyncio.run(main())
-    else:
-        # Python 3.9以前はevent loopを取得して実行
-        loop = asyncio.get_event_loop()
+    # サーバーとキープアライブスレッドの起動
+    try:
+        from bot.server import server_thread, stop_threads
+        server_thread()
+        logger.info("Web server and keepalive threads started")
+    except Exception as e:
+        logger.error(f"Error starting server threads: {e}")
+    
+    try:
+        # Botの起動
+        bot.run(DISCORD_TOKEN)
+    except KeyboardInterrupt:
+        logger.info("Bot shutdown requested by user...")
+    except Exception as e:
+        logger.error(f"Error running bot: {e}")
+    finally:
+        # スレッド停止処理
         try:
-            loop.run_until_complete(main())
-        except KeyboardInterrupt:
-            pass
-        finally:
-            loop.close()
+            stop_threads()
+            logger.info("All threads stopped successfully")
+        except Exception as e:
+            logger.error(f"Error stopping threads: {e}")
