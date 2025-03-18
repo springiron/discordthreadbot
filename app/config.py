@@ -115,6 +115,7 @@ class ConfigSchema:
             "default": {
                 "message_content": True,
                 "guilds": True,
+                "messages": True,
                 "guild_messages": True,
             },
             "description": "Botの意図（intents）設定"
@@ -180,6 +181,9 @@ class Config:
         # 全ての設定値を読み込む
         self._load_all_settings()
         
+        # PORTの設定を読み込む
+        self.PORT = self._get_setting_value("PORT", self._schema.PORT)
+        
     def _load_env_file(self) -> bool:
         """
         .envファイルがあれば読み込む
@@ -235,7 +239,7 @@ class Config:
         # 環境変数から値を取得
         value = None
         for env_var in env_vars:
-            if env_var in os.environ:
+            if (env_var in os.environ):
                 value = os.environ[env_var]
                 break
         
