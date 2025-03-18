@@ -37,25 +37,25 @@ def load_environment_variables():
 load_environment_variables()
 
 from bot.client import ThreadBot
-from config import BOT_TOKEN, ENABLED_CHANNEL_IDS, KEEP_ALIVE_ENABLED, KEEP_ALIVE_INTERVAL
+from config import DISCORD_BOT_TOKEN as BOT_TOKEN, ENABLED_CHANNEL_IDS, KEEP_ALIVE_ENABLED, KEEP_ALIVE_INTERVAL, PORT
 from utils.logger import setup_logger
-from utils.keep_alive import KeepAlive
-from utils.health_check import HealthCheckServer
+from utils.keepalive import start_system_monitor, stop_system_monitor
 
 logger = setup_logger(__name__)
-# グローバル変数としてインスタンスを保持
-keep_alive_instance = None
-health_check_server = None
+
+# グローバル変数としてモニタリングインスタンスを保持
+system_monitor = None
 
 def handle_exit(signum, frame):
     """終了シグナルを適切に処理する"""
     logger.info("終了シグナルを受信しました。Botを正常に終了します。")
-    # キープアライブとヘルスチェックサーバーを停止
-    global keep_alive_instance, health_check_server
-    if keep_alive_instance:
-        keep_alive_instance.stop()
-    if health_check_server:
-        health_check_server.stop()
+    
+    # システムモニタリングを停止
+    global system_monitor
+    if system_monitor:
+        stop_system_monitor(system_monitor)
+        logger.info("システムモニタリングを停止しました")
+    
     sys.exit(0)
 
 async def main():
@@ -80,17 +80,17 @@ async def main():
         logger.warning("有効なチャンネルIDが設定されていません。すべてのチャンネルで動作します。")
     
     # キープアライブ機能の開始
-    global keep_alive_instance, health_check_server
+    global system_monitor
     if KEEP_ALIVE_ENABLED:
         logger.info(f"キープアライブ機能を有効化します (間隔: {KEEP_ALIVE_INTERVAL}分)")
-        keep_alive_instance = KeepAlive(interval_minutes=KEEP_ALIVE_INTERVAL)
-        keep_alive_instance.start()
+        # 分を秒に変換
+        keep_alive_interval_seconds = KEEP_ALIVE_INTERVAL * 60
+        system_monitor = start_system_monitor(
+            port=PORT,
+            keep_alive_interval=keep_alive_interval_seconds
+        )
     else:
         logger.info("キープアライブ機能は無効化されています")
-        
-    # ヘルスチェックサーバーの開始
-    health_check_server = HealthCheckServer(port=8080)
-    health_check_server.start()
     
     # Botインスタンスを作成
     bot = ThreadBot()
@@ -107,34 +107,12 @@ async def main():
         raise
     finally:
         # Botが終了する際にキープアライブとヘルスチェックサーバーも停止
-        if keep_alive_instance:
-            keep_alive_instance.stop()
-        if health_check_server:
-            health_check_server.stop()
+        if system_monitor:
+            stop_system_monitor(system_monitor)
+            logger.info("システムモニタリングを停止しました")
 
 # ===============================
 # Bot 実行
 # ===============================
 if __name__ == "__main__":
-    # サーバーとキープアライブスレッドの起動
-    try:
-        from bot.server import server_thread, stop_threads
-        server_thread()
-        logger.info("Web server and keepalive threads started")
-    except Exception as e:
-        logger.error(f"Error starting server threads: {e}")
-    
-    try:
-        # Botの起動
-        bot.run(DISCORD_TOKEN)
-    except KeyboardInterrupt:
-        logger.info("Bot shutdown requested by user...")
-    except Exception as e:
-        logger.error(f"Error running bot: {e}")
-    finally:
-        # スレッド停止処理
-        try:
-            stop_threads()
-            logger.info("All threads stopped successfully")
-        except Exception as e:
-            logger.error(f"Error stopping threads: {e}")
+    asyncio.run(main())
