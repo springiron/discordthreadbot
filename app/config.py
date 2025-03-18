@@ -120,6 +120,47 @@ class ConfigSchema:
             "description": "Botの意図（intents）設定"
         }
 
+class ConfigDict(dict):
+    """
+    Config値へのアクセスを辞書形式で提供するラッパークラス
+    後方互換性を維持するために使用
+    """
+    def __init__(self, config_obj):
+        """
+        Configオブジェクトから辞書を初期化
+        
+        Args:
+            config_obj: Configオブジェクト
+        """
+        self._config = config_obj
+        self._dict = {}
+        
+        # Configオブジェクトの属性を辞書に変換
+        for attr_name in dir(config_obj):
+            if not attr_name.startswith('_') and not callable(getattr(config_obj, attr_name)):
+                value = getattr(config_obj, attr_name)
+                self._dict[attr_name] = value
+                
+    def __getitem__(self, key):
+        """
+        辞書形式のアクセスを提供
+        
+        Args:
+            key: アクセスするキー
+            
+        Returns:
+            設定値
+        """
+        if key in self._dict:
+            return self._dict[key]
+        raise KeyError(f"設定 '{key}' が見つかりません")
+        
+    def __contains__(self, key):
+        """
+        キーの存在確認
+        """
+        return key in self._dict
+
 class Config:
     """設定管理クラス"""
     
@@ -129,6 +170,9 @@ class Config:
         
         # 環境変数から読み込んだ値を保持する辞書
         self._values = {}
+        
+        # 辞書形式アクセス用のプロパティ
+        self._dict_interface = None
         
         # .envファイルの読み込み（あれば）
         self._load_env_file()
@@ -236,6 +280,34 @@ class Config:
             return self._values[name]
         raise AttributeError(f"設定 '{name}' が見つかりません")
     
+    def __getitem__(self, key: str) -> Any:
+        """
+        辞書形式でのアクセスをサポート
+        
+        Args:
+            key: 設定名
+            
+        Returns:
+            Any: 設定値
+            
+        Raises:
+            KeyError: 設定が見つからない場合
+        """
+        if key in self._values:
+            return self._values[key]
+        raise KeyError(f"設定 '{key}' が見つかりません")
+    
+    def get_dict(self):
+        """
+        設定を辞書として取得
+        
+        Returns:
+            Dict: 設定値の辞書
+        """
+        if self._dict_interface is None:
+            self._dict_interface = ConfigDict(self)
+        return self._dict_interface
+        
     def print_settings(self):
         """現在の設定値をログに出力"""
         logger.info("===== 現在の設定 =====")
@@ -249,19 +321,26 @@ class Config:
         logger.info("=====================")
 
 # シングルトンインスタンスを作成
-BOT_CONFIG = Config()
+config_instance = Config()
+
+# 後方互換性のために辞書形式でもアクセスできるようにする
+BOT_CONFIG = {
+    "intents": config_instance.BOT_INTENTS,
+    # 他の必要な設定も追加
+}
 
 # 後方互換性のためのエイリアス
-DISCORD_BOT_TOKEN = BOT_CONFIG.DISCORD_BOT_TOKEN
-DEBUG_MODE = BOT_CONFIG.DEBUG_MODE
-LOG_LEVEL = BOT_CONFIG.LOG_LEVEL
-THREAD_AUTO_ARCHIVE_DURATION = BOT_CONFIG.THREAD_AUTO_ARCHIVE_DURATION
-THREAD_NAME_TEMPLATE = BOT_CONFIG.THREAD_NAME_TEMPLATE
-TRIGGER_KEYWORDS = BOT_CONFIG.TRIGGER_KEYWORDS
-ENABLED_CHANNEL_IDS = BOT_CONFIG.ENABLED_CHANNEL_IDS
-KEEP_ALIVE_ENABLED = BOT_CONFIG.KEEP_ALIVE_ENABLED
-KEEP_ALIVE_INTERVAL = BOT_CONFIG.KEEP_ALIVE_INTERVAL
-BOT_INTENTS = BOT_CONFIG.BOT_INTENTS
+DISCORD_BOT_TOKEN = config_instance.DISCORD_BOT_TOKEN
+DEBUG_MODE = config_instance.DEBUG_MODE
+LOG_LEVEL = config_instance.LOG_LEVEL
+THREAD_AUTO_ARCHIVE_DURATION = config_instance.THREAD_AUTO_ARCHIVE_DURATION
+THREAD_NAME_TEMPLATE = config_instance.THREAD_NAME_TEMPLATE
+TRIGGER_KEYWORDS = config_instance.TRIGGER_KEYWORDS
+ENABLED_CHANNEL_IDS = config_instance.ENABLED_CHANNEL_IDS
+KEEP_ALIVE_ENABLED = config_instance.KEEP_ALIVE_ENABLED
+KEEP_ALIVE_INTERVAL = config_instance.KEEP_ALIVE_INTERVAL
+PORT = config_instance.PORT
+BOT_INTENTS = config_instance.BOT_INTENTS
 
 # 必須設定の確認
 if not DISCORD_BOT_TOKEN:

@@ -26,9 +26,9 @@ class ThreadBot(commands.Bot):
         """
         # Botの意図を設定
         intents = discord.Intents.default()
-        intents.message_content = BOT_CONFIG["intents"]["message_content"]
-        intents.guilds = BOT_CONFIG["intents"]["guilds"]
-        intents.guild_messages = BOT_CONFIG["intents"]["guild_messages"]
+        intents.message_content = BOT_CONFIG.BOT_INTENTS["message_content"] 
+        intents.guilds = BOT_CONFIG.BOT_INTENTS["guilds"]
+        intents.guild_messages = BOT_CONFIG.BOT_INTENTS["guild_messages"]
         
         # Botを初期化
         super().__init__(command_prefix="!", intents=intents)
