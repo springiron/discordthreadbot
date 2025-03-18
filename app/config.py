@@ -345,7 +345,7 @@ TRIGGER_KEYWORDS = config_instance.TRIGGER_KEYWORDS
 ENABLED_CHANNEL_IDS = config_instance.ENABLED_CHANNEL_IDS
 KEEP_ALIVE_ENABLED = config_instance.KEEP_ALIVE_ENABLED
 KEEP_ALIVE_INTERVAL = config_instance.KEEP_ALIVE_INTERVAL
-PORT = config_instance.PORT
+PORT = config_instance.PORT  # この行を追加
 BOT_INTENTS = config_instance.BOT_INTENTS
 
 # 必須設定の確認
