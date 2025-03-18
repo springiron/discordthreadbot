@@ -325,6 +325,12 @@ config_instance = Config()
 
 # 後方互換性のために辞書形式でもアクセスできるようにする
 BOT_CONFIG = {
+    "BOT_INTENTS": {
+        "message_content": True,
+        "guilds": True,
+        "messages": True,
+        "guild_messages": True  # この行を追加
+    },
     "intents": config_instance.BOT_INTENTS,
     # 他の必要な設定も追加
 }
