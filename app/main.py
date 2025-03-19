@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Discord Bot メインエントリーポイント
-スレッド自動生成Botを起動する - ロバストキープアライブ機能を統合
+スレッド自動生成Botを起動する - 非同期ループの問題を修正
 """
 
 import asyncio
@@ -50,7 +50,7 @@ logger = setup_logger(__name__)
 
 # グローバル変数としてBotインスタンスを保持
 bot_instance = None
-exit_event = asyncio.Event()
+# 終了イベントは各関数内で作成（グローバル変数として共有しない）
 restart_count = 0
 MAX_RESTARTS = 5
 RESTART_DELAY = 60  # 再起動間の待機時間（秒）
@@ -58,8 +58,19 @@ RESTART_DELAY = 60  # 再起動間の待機時間（秒）
 # キープアライブスレッドの参照を保持
 keepalive_thread = None
 
+# シグナルハンドラの状態
+signal_received = False
+
 def handle_exit(signum, frame):
     """終了シグナルを適切に処理する"""
+    global signal_received
+    
+    # 多重シグナル処理を防止
+    if signal_received:
+        logger.warning("既に終了処理中です。強制終了するにはCtrl+Cをもう一度押してください。")
+        return
+        
+    signal_received = True
     logger.info(f"終了シグナル {signum} を受信しました。Botを正常に終了します。")
     
     # キープアライブスレッドを停止
@@ -68,18 +79,15 @@ def handle_exit(signum, frame):
         logger.info("キープアライブスレッドを停止します")
         stop_keepalive()
     
-    # 非同期終了イベントをセット
-    if not exit_event.is_set():
-        loop = asyncio.get_event_loop()
-        loop.call_soon_threadsafe(exit_event.set)
-        logger.info("非同期終了イベントをセットしました")
+    # 非同期コードからの終了はメインループで処理
+    print(f"終了シグナル {signum} を受信しました。終了処理中...")
     
     # 10秒以内に終了しなければ強制終了
     import threading
     def force_exit():
         time.sleep(10)
         logger.critical("10秒以内に正常終了できませんでした。強制終了します。")
-        sys.exit(1)
+        os._exit(1)  # sys.exit()ではなくos._exit()を使用
     
     threading.Thread(target=force_exit, daemon=True).start()
 
@@ -106,113 +114,65 @@ async def initialize_bot() -> Optional[ThreadBot]:
     bot_instance = ThreadBot()
     return bot_instance
 
-async def start_bot(bot: ThreadBot) -> bool:
-    """Botを起動し、適切に終了する"""
+async def run_bot(bot: ThreadBot):
+    """
+    Botの実行と終了を管理するシンプルな関数
+    """
     try:
         logger.info("Botを起動しています...")
-        # ボットを起動しつつ、終了イベントを待機
-        bot_task = asyncio.create_task(bot.start(BOT_TOKEN))
-        exit_task = asyncio.create_task(exit_event.wait())
-        
-        # いずれかのタスクが完了するまで待機
-        done, pending = await asyncio.wait(
-            [bot_task, exit_task],
-            return_when=asyncio.FIRST_COMPLETED
-        )
-        
-        # 残りのタスクをキャンセル
-        for task in pending:
-            task.cancel()
-            
-        # 終了イベントが発火した場合
-        if exit_task in done:
-            logger.info("終了イベントを検知しました。Botを正常に終了します。")
-            await bot.close()
-            return False
-            
-        # ボットが何らかの理由で終了した場合
-        if bot_task in done:
-            try:
-                # 例外が発生したかチェック
-                bot_task.result()
-                logger.info("Botが正常に終了しました。")
-                return False
-            except Exception as e:
-                logger.error(f"Bot実行中にエラーが発生しました: {e}")
-                logger.error(traceback.format_exc())
-                return True  # 再起動が必要
-                
+        await bot.start(BOT_TOKEN)
     except KeyboardInterrupt:
         logger.info("キーボード割り込みを検知しました。Botを終了します。")
-        await bot.close()
-        return False
     except Exception as e:
-        logger.error(f"予期しないエラーが発生しました: {e}")
+        logger.error(f"Bot実行中にエラーが発生しました: {e}")
         logger.error(traceback.format_exc())
-        if bot and bot.is_ready():
+    finally:
+        # 明示的にクローズ処理を実行
+        if bot.is_ready():
             await bot.close()
-        return True  # 再起動が必要
-
-async def main_with_restart():
-    """リトライ機能付きのメイン関数"""
-    global restart_count, keepalive_thread
-    
-    # ロバストキープアライブ機能の開始
-    if KEEP_ALIVE_ENABLED:
-        logger.info(f"ロバストキープアライブ機能を有効化します (間隔: 30秒)")
-        # 分から秒に変換せず、30秒固定の高頻度で実行
-        keepalive_thread = start_keepalive(
-            port=PORT,
-            interval=30  # 30秒固定の高頻度
-        )
-    else:
-        logger.info("キープアライブ機能は無効化されています")
-    
-    while restart_count < MAX_RESTARTS and not exit_event.is_set():
-        if restart_count > 0:
-            logger.warning(f"Botを再起動しています... (試行: {restart_count}/{MAX_RESTARTS})")
-            await asyncio.sleep(RESTART_DELAY)
-        
-        bot = await initialize_bot()
-        if not bot:
-            logger.critical("Botの初期化に失敗しました。終了します。")
-            break
-            
-        should_restart = await start_bot(bot)
-        if not should_restart:
-            break
-            
-        restart_count += 1
-        logger.warning(f"残り再起動回数: {MAX_RESTARTS - restart_count}")
-    
-    # 最大再起動回数に達した場合
-    if restart_count >= MAX_RESTARTS:
-        logger.critical(f"最大再起動回数 ({MAX_RESTARTS}回) に達しました。終了します。")
-    
-    # キープアライブスレッドを停止
-    if keepalive_thread:
-        stop_keepalive()
-        logger.info("キープアライブスレッドを停止しました")
 
 async def main():
-    """メイン関数"""
+    """メイン関数 - シンプル化してイベントループの問題を回避"""
+    global keepalive_thread
+    
     # 終了シグナルハンドラを設定
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)
     
     try:
-        await main_with_restart()
+        # ロバストキープアライブ機能の開始
+        if KEEP_ALIVE_ENABLED:
+            logger.info(f"ロバストキープアライブ機能を有効化します (間隔: 30秒)")
+            keepalive_thread = start_keepalive(
+                port=PORT,
+                interval=30  # 30秒固定の高頻度
+            )
+        else:
+            logger.info("キープアライブ機能は無効化されています")
+            
+        # Botを初期化して実行
+        bot = await initialize_bot()
+        if bot:
+            await run_bot(bot)
+        else:
+            logger.critical("Botの初期化に失敗しました。終了します。")
+            
+    except KeyboardInterrupt:
+        logger.info("キーボード割り込みを検知しました。終了します。")
     except Exception as e:
         logger.critical(f"致命的なエラーが発生しました: {e}")
         logger.critical(traceback.format_exc())
-        
-        # 終了前の最終クリーンアップ
+    finally:
+        # 終了時のクリーンアップ
         if keepalive_thread:
             stop_keepalive()
+            logger.info("キープアライブスレッドを停止しました")
+            
         if bot_instance and bot_instance.is_ready():
-            await bot_instance.close()
-        
-        sys.exit(1)
+            try:
+                await bot_instance.close()
+            except:
+                pass
 
 # ===============================
 # Bot 実行
@@ -226,10 +186,11 @@ if __name__ == "__main__":
         print("Ctrl+Cで終了できます")
         print("=" * 60)
         
+        # 直接実行
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("プログラムが中断されました。終了します。")
+        print("\nプログラムが中断されました。終了します。")
     except Exception as e:
-        logger.critical(f"予期しない例外が発生しました: {e}")
-        logger.critical(traceback.format_exc())
+        print(f"予期しない例外が発生しました: {e}")
+        traceback.print_exc()
         sys.exit(1)
