@@ -5,13 +5,6 @@ robust_keepalive.py - シンプルで堅牢なキープアライブモジュー�
 
 Koyebなどのクラウドサービスでのインスタンスのスリープを防止するための
 シンプルかつ効果的なキープアライブ機能を提供します。
-
-特徴:
-- 30秒間隔での高頻度キープアライブ
-- 複数タイプのアクティビティ（HTTP、ファイルI/O、CPU、メモリ）
-- 標準出力を中心とした可視性
-- 堅牢なエラーハンドリング
-- シンプルで専用のモジュール設計
 """
 
 import threading
@@ -20,433 +13,186 @@ import logging
 import os
 import sys
 import random
-import json
 from datetime import datetime
-from typing import Optional, Dict, Any, List
-
-# 必要に応じてHTTPリクエスト用のライブラリをインポート
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-except ImportError:
-    REQUESTS_AVAILABLE = False
-    print("警告: requestsライブラリがインストールされていません。HTTP活動は無効化されます。")
 
 # ロギングの設定 - 標準出力のみ使用
-log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(
     level=logging.INFO,
-    format=log_format,
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger('robust_keepalive')
 
 # スレッド停止用イベント
 stop_event = threading.Event()
 
-# アクティビティ状態の追跡
-activity_state = {
-    "start_time": time.time(),
-    "cycle_count": 0,
-    "http_requests": 0,
-    "file_operations": 0,
-    "cpu_activities": 0,
-    "memory_activities": 0,
-    "errors": {
-        "http": 0,
-        "file": 0,
-        "cpu": 0,
-        "memory": 0
-    },
-    "last_activity": None,
-    "instance_id": random.randint(1000, 9999)
-}
+# インスタンスID（起動ごとにランダム）
+INSTANCE_ID = random.randint(1000, 9999)
 
-def generate_http_activity(port: int = 8080) -> bool:
-    """
-    HTTPリクエストを送信してネットワークアクティビティを生成
-    
-    Args:
-        port: ローカルサーバーのポート番号
-        
-    Returns:
-        bool: 成功した場合はTrue
-    """
-    if not REQUESTS_AVAILABLE:
-        return False
-    
-    try:
-        # 自身のローカルサーバーにアクセス
-        response = requests.get(f"http://localhost:{port}/", timeout=3)
-        success = response.status_code == 200
-        
-        # 状態を更新
-        activity_state["http_requests"] += 1
-        activity_state["last_activity"] = "http"
-        
-        # 5回ごとに詳細ログを出力
-        if activity_state["http_requests"] % 5 == 0:
-            output_msg = f"キープアライブ: HTTP活動 #{activity_state['http_requests']} 実行 (ステータス: {response.status_code})"
-            logger.info(output_msg)
-            print(output_msg)  # 標準出力にも表示
-            
-        return success
-    except Exception as e:
-        activity_state["errors"]["http"] += 1
-        logger.error(f"HTTP活動中にエラーが発生: {e}")
-        return False
+# HTTPエラーを減らすための設定
+HTTP_ENABLED = False
+HTTP_ERROR_COUNT = 0
+MAX_HTTP_ERRORS = 3  # この回数HTTPエラーが連続したらHTTPアクティビティを無効化
 
 def generate_file_activity() -> bool:
-    """
-    ファイル操作を実行してディスクI/Oアクティビティを生成
-    
-    Returns:
-        bool: 成功した場合はTrue
-    """
+    """ファイル操作によるアクティビティ生成"""
     try:
-        # キープアライブ情報をファイルに書き込み
-        # 書き込み可能なディレクトリを使用
-        try:
-            # tmpディレクトリを優先的に使用
-            if os.path.exists('/tmp') and os.access('/tmp', os.W_OK):
-                keepalive_dir = "/tmp/keepalive_data"
-            else:
-                # カレントディレクトリに作成
-                keepalive_dir = "keepalive_data"
-                
-            os.makedirs(keepalive_dir, exist_ok=True)
-        except (PermissionError, OSError):
-            # どちらのディレクトリも作成できない場合はカレントディレクトリに直接書き込み
-            keepalive_dir = "."
-        
-        # タイムスタンプを含むファイル名
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{keepalive_dir}/keepalive_{timestamp}.txt"
-        
-        # ステータス情報を記録 - プレーンテキスト形式（権限問題回避）
-        data = (
-            f"Timestamp: {time.time()}\n"
-            f"Datetime: {datetime.now().isoformat()}\n"
-            f"Cycle: {activity_state['cycle_count']}\n"
-            f"Instance ID: {activity_state['instance_id']}\n"
-            f"Uptime (seconds): {time.time() - activity_state['start_time']}\n"
-        )
-        
-        # 定期的に古いファイルをクリーンアップ（10回ごと）
-        if activity_state["file_operations"] % 10 == 0:
-            try:
-                # keepalive_dirがアクセス可能な場合のみ
-                if os.path.exists(keepalive_dir) and os.access(keepalive_dir, os.R_OK | os.W_OK):
-                    files = [f for f in os.listdir(keepalive_dir) if f.startswith("keepalive_")]
-                    if len(files) > 20:  # 20ファイル以上あれば古いものを削除
-                        files.sort()
-                        for old_file in files[:len(files)-20]:
-                            try:
-                                os.remove(os.path.join(keepalive_dir, old_file))
-                            except:
-                                pass  # 個別のファイル削除エラーは無視
-                        logger.info(f"古いキープアライブファイルをクリーンアップしました ({len(files)-20}件)")
-            except Exception as cleanup_error:
-                # クリーンアップエラーは無視して継続
-                pass
-        
-        # 新しいファイルを書き込み
-        try:
-            with open(filename, "w") as f:
-                f.write(data)
-                
-            # メインのステータスファイルも更新
-            with open(f"{keepalive_dir}/keepalive_current.txt", "w") as f:
-                activity_state["file_operations"] += 1
-                activity_state["last_activity"] = "file"
-                
-                # プレーンテキスト形式で書き込み
-                f.write(f"Instance ID: {activity_state['instance_id']}\n")
-                f.write(f"Last Updated: {datetime.now().isoformat()}\n")
-                f.write(f"Cycle Count: {activity_state['cycle_count']}\n")
-                f.write(f"HTTP Requests: {activity_state['http_requests']}\n")
-                f.write(f"File Operations: {activity_state['file_operations']}\n")
-                f.write(f"CPU Activities: {activity_state['cpu_activities']}\n")
-                f.write(f"Memory Activities: {activity_state['memory_activities']}\n")
-                f.write(f"Errors: HTTP={activity_state['errors']['http']}, "
-                       f"File={activity_state['errors']['file']}, "
-                       f"CPU={activity_state['errors']['cpu']}, "
-                       f"Memory={activity_state['errors']['memory']}\n")
+        # 書き込み可能なディレクトリを見つける
+        if os.path.exists('/tmp') and os.access('/tmp', os.W_OK):
+            filepath = "/tmp/keepalive.txt"
+        else:
+            filepath = "keepalive.txt"
             
-            # 3回ごとに詳細ログを出力
-            if activity_state["file_operations"] % 3 == 0:
-                output_msg = f"キープアライブ: ファイル活動 #{activity_state['file_operations']} 実行 (場所: {keepalive_dir})"
-                logger.info(output_msg)
-                print(output_msg)  # 標準出力にも表示
-                
-            return True
-        except Exception as file_error:
-            activity_state["errors"]["file"] += 1
-            logger.error(f"ファイル書き込み中にエラーが発生: {file_error}")
-            
-            # 極端な場合: ファイルに書き込めない場合でもアクティビティは成功したとみなす
-            # キープアライブの主な目的はアクティビティを生成することであり、ログの保存ではない
-            activity_state["file_operations"] += 1
-            activity_state["last_activity"] = "file"
-            return True
-            
+        # ファイルに現在時刻を書き込む
+        with open(filepath, "w") as f:
+            f.write(f"Keepalive timestamp: {datetime.now().isoformat()}\n")
+            f.write(f"Instance ID: {INSTANCE_ID}\n")
+        
+        return True
     except Exception as e:
-        activity_state["errors"]["file"] += 1
-        logger.error(f"ファイル活動中にエラーが発生: {e}")
+        logger.debug(f"ファイル活動エラー: {e}")
         return False
 
 def generate_cpu_activity() -> bool:
-    """
-    CPU計算を実行してCPUアクティビティを生成
-    
-    Returns:
-        bool: 成功した場合はTrue
-    """
+    """CPU計算によるアクティビティ生成"""
     try:
-        # 素数計算によるCPU負荷の生成（計算量を調整可能）
+        # 素数を計算してCPUを使用
         def is_prime(n):
-            """素数判定関数"""
-            if n <= 1:
-                return False
-            if n <= 3:
-                return True
-            if n % 2 == 0 or n % 3 == 0:
-                return False
+            if n <= 1: return False
+            if n <= 3: return True
+            if n % 2 == 0 or n % 3 == 0: return False
             i = 5
             while i * i <= n:
-                if n % i == 0 or n % (i + 2) == 0:
-                    return False
+                if n % i == 0 or n % (i + 2) == 0: return False
                 i += 6
             return True
         
-        # 現在のサイクル数に基づいて計算量を変える
-        calculation_size = 1000 + (activity_state["cycle_count"] % 10) * 100
-        
-        # 素数を計算
-        count = 0
-        for num in range(calculation_size):
-            if is_prime(num):
-                count += 1
-        
-        activity_state["cpu_activities"] += 1
-        activity_state["last_activity"] = "cpu"
-        
-        # 4回ごとに詳細ログを出力
-        if activity_state["cpu_activities"] % 4 == 0:
-            output_msg = f"キープアライブ: CPU活動 #{activity_state['cpu_activities']} 実行 (素数: {count}個)"
-            logger.info(output_msg)
-            print(output_msg)  # 標準出力にも表示
-            
+        # ある程度負荷のかかる計算を実行
+        count = sum(1 for num in range(2000) if is_prime(num))
         return True
     except Exception as e:
-        activity_state["errors"]["cpu"] += 1
-        logger.error(f"CPU活動中にエラーが発生: {e}")
+        logger.debug(f"CPU活動エラー: {e}")
         return False
 
 def generate_memory_activity() -> bool:
-    """
-    メモリ操作を実行してメモリアクティビティを生成
-    
-    Returns:
-        bool: 成功した場合はTrue
-    """
+    """メモリ操作によるアクティビティ生成"""
     try:
-        # メモリ使用によるアクティビティ生成
-        # サイズはサイクルごとに変化させる（メモリリークを防ぐため解放も確実に行う）
-        size = 100000 + (activity_state["cycle_count"] % 5) * 50000
-        
-        # 一時的な大きなリストを作成
-        memory_data = [random.random() for _ in range(size)]
-        
-        # データに対して何らかの操作を実行
-        result = sum(memory_data) / len(memory_data)
-        
-        # 明示的に解放
-        del memory_data
-        
-        activity_state["memory_activities"] += 1
-        activity_state["last_activity"] = "memory"
-        
-        # 6回ごとに詳細ログを出力
-        if activity_state["memory_activities"] % 6 == 0:
-            output_msg = f"キープアライブ: メモリ活動 #{activity_state['memory_activities']} 実行 (平均値: {result:.4f})"
-            logger.info(output_msg)
-            print(output_msg)  # 標準出力にも表示
-            
+        # 一時的にメモリを使用
+        data = [random.random() for _ in range(100000)]
+        result = sum(data) / len(data)
+        del data  # 明示的に解放
         return True
     except Exception as e:
-        activity_state["errors"]["memory"] += 1
-        logger.error(f"メモリ活動中にエラーが発生: {e}")
+        logger.debug(f"メモリ活動エラー: {e}")
         return False
 
-def run_keepalive_cycle(port: int = 8080) -> None:
-    """
-    1サイクルのキープアライブアクティビティを実行
+def generate_http_activity() -> bool:
+    """HTTPリクエスト送信によるアクティビティ生成"""
+    global HTTP_ENABLED, HTTP_ERROR_COUNT
     
-    Args:
-        port: ローカルサーバーのポート番号
-    """
-    cycle_start = time.time()
-    activity_state["cycle_count"] += 1
-    
-    # サイクル数に基づいてアクティビティを選択
-    cycle = activity_state["cycle_count"]
-    
-    # すべてのサイクルでステータスを更新して表示（5サイクルごとに詳細表示）
-    if cycle % 5 == 0:
-        uptime = time.time() - activity_state["start_time"]
-        minutes, seconds = divmod(int(uptime), 60)
-        hours, minutes = divmod(minutes, 60)
-        days, hours = divmod(hours, 24)
+    # HTTPが無効化されている場合はスキップ
+    if not HTTP_ENABLED:
+        return False
         
-        uptime_str = ""
-        if days > 0:
-            uptime_str += f"{days}日 "
-        if hours > 0 or days > 0:
-            uptime_str += f"{hours}時間 "
-        uptime_str += f"{minutes}分 {seconds}秒"
+    try:
+        # requestsがインストールされているか確認
+        import requests
         
-        output_msg = (
-            f"キープアライブ状態 [ID:{activity_state['instance_id']}]: "
-            f"サイクル {cycle}, 稼働時間: {uptime_str}, "
-            f"HTTP: {activity_state['http_requests']}, "
-            f"ファイル: {activity_state['file_operations']}, "
-            f"CPU: {activity_state['cpu_activities']}, "
-            f"メモリ: {activity_state['memory_activities']}"
-        )
-        logger.info(output_msg)
-        print(output_msg)  # 標準出力にも表示
-    
-    # すべてのサイクルで少なくとも1つのアクティビティを実行
-    activity_executed = False
-    
-    # サイクルに基づいたアクティビティ選択ロジック
-    if cycle % 2 == 0:  # 偶数サイクル
-        generate_http_activity(port)
-        activity_executed = True
-    
-    if cycle % 3 == 0:  # 3の倍数サイクル
-        generate_file_activity()
-        activity_executed = True
-    
-    if cycle % 4 == 0:  # 4の倍数サイクル
-        generate_cpu_activity()
-        activity_executed = True
-    
-    if cycle % 5 == 0:  # 5の倍数サイクル
-        generate_memory_activity()
-        activity_executed = True
-    
-    # どのアクティビティも実行されなかった場合はデフォルトのCPUアクティビティを実行
-    if not activity_executed:
-        generate_cpu_activity()
-    
-    # サイクル実行時間を計測して記録
-    cycle_duration = time.time() - cycle_start
-    
-    # 異常に長いサイクルの場合は警告
-    if cycle_duration > 2.0:  # 2秒以上かかったら警告
-        logger.warning(f"キープアライブサイクル {cycle} の実行に {cycle_duration:.2f}秒かかりました（通常より長い）")
+        # 自分自身にリクエスト送信（成功しなくてもOK、アクティビティが目的）
+        response = requests.get("http://localhost:8080/", timeout=1)
+        HTTP_ERROR_COUNT = 0  # 成功したらエラーカウントをリセット
+        return True
+    except ImportError:
+        # requestsがインストールされていない
+        HTTP_ENABLED = False
+        return False
+    except Exception as e:
+        # HTTPリクエストが失敗した場合
+        HTTP_ERROR_COUNT += 1
+        if HTTP_ERROR_COUNT >= MAX_HTTP_ERRORS:
+            # 規定回数エラーが続いたらHTTPを無効化
+            logger.info(f"HTTP活動を無効化します (連続エラー: {HTTP_ERROR_COUNT}回)")
+            HTTP_ENABLED = False
+        return False
 
-def keep_alive_loop(port: int = 8080, interval: int = 30) -> None:
-    """
-    メインのキープアライブループ関数
+def run_keepalive_cycle():
+    """1サイクル分のキープアライブアクティビティを実行"""
+    # 最低でも常に2種類のアクティビティを実行
+    cpu_result = generate_cpu_activity()
+    file_result = generate_file_activity()
     
-    Args:
-        port: ローカルサーバーのポート番号
-        interval: キープアライブサイクルの間隔（秒）
-    """
-    logger.info(f"ロバストキープアライブスレッド [ID:{activity_state['instance_id']}] を開始しました")
-    print(f"ロバストキープアライブスレッド [ID:{activity_state['instance_id']}] を開始しました")
+    # 5サイクルに1回はメモリアクティビティも追加
+    if random.randint(1, 5) == 1:
+        memory_result = generate_memory_activity()
+    
+    # HTTPはオプション（失敗してもOK）
+    if HTTP_ENABLED and random.randint(1, 3) == 1:
+        http_result = generate_http_activity()
+
+def keep_alive_loop(interval: int = 30):
+    """メインのキープアライブループ"""
+    cycle_count = 0
+    start_time = time.time()
+    
+    logger.info(f"キープアライブスレッド [ID:{INSTANCE_ID}] を開始しました")
+    print(f"キープアライブスレッド [ID:{INSTANCE_ID}] を開始しました")
     
     while not stop_event.is_set():
         try:
-            # 1回のキープアライブサイクルを実行
-            run_keepalive_cycle(port)
+            # キープアライブアクティビティを実行
+            run_keepalive_cycle()
+            cycle_count += 1
             
-            # 次のサイクルまで待機
-            # 長いスリープを避けるために複数の短いスリープに分割
+            # 10サイクルごとにステータスを出力
+            if cycle_count % 10 == 0:
+                uptime = time.time() - start_time
+                minutes, seconds = divmod(int(uptime), 60)
+                hours, minutes = divmod(minutes, 60)
+                days, hours = divmod(hours, 24)
+                
+                uptime_str = ""
+                if days > 0: uptime_str += f"{days}日 "
+                if hours > 0 or days > 0: uptime_str += f"{hours}時間 "
+                uptime_str += f"{minutes}分 {seconds}秒"
+                
+                print(f"キープアライブ状態 [ID:{INSTANCE_ID}]: サイクル {cycle_count}, 稼働時間: {uptime_str}")
+            
+            # 次のサイクルまで待機（1秒間隔で停止チェック）
             for _ in range(interval):
                 if stop_event.is_set():
                     break
                 time.sleep(1)
                 
         except Exception as e:
-            # 予期せぬエラーが発生しても停止せず継続
-            logger.error(f"キープアライブループでエラーが発生: {e}")
-            try:
-                # スタックトレースをログに記録
-                import traceback
-                logger.error(traceback.format_exc())
-            except:
-                pass
-            
-            # エラー発生後は少し待機してから次のサイクルへ
-            time.sleep(5)
+            # エラーが発生しても継続
+            logger.error(f"キープアライブエラー: {e}")
+            time.sleep(5)  # エラー時は少し待機
     
     logger.info("キープアライブループを終了します")
     print("キープアライブループを終了します")
 
 def start_keepalive(port: int = 8080, interval: int = 30) -> threading.Thread:
-    """
-    キープアライブスレッドを起動する関数
+    """キープアライブスレッドを開始"""
+    global HTTP_ENABLED
     
-    Args:
-        port: ローカルサーバーのポート番号
-        interval: キープアライブサイクルの間隔（秒）
-        
-    Returns:
-        threading.Thread: 起動したスレッド
-    """
+    # ポート番号を設定
+    HTTP_ENABLED = True  # 最初は有効化してみる
+    
+    # スレッドを起動
     thread = threading.Thread(
-        target=keep_alive_loop, 
-        args=(port, interval), 
+        target=keep_alive_loop,
+        args=(interval,),
         daemon=True,
-        name="robust-keepalive"
+        name="keepalive"
     )
     thread.start()
     
-    # 短い待機でスレッドが正常に開始されたことを確認
-    time.sleep(1)
-    
     if thread.is_alive():
-        logger.info(f"ロバストキープアライブスレッドを開始しました (間隔: {interval}秒)")
-        print(f"ロバストキープアライブスレッドを開始しました (間隔: {interval}秒)")
-    else:
-        logger.error("キープアライブスレッドの起動に失敗しました")
-        print("キープアライブスレッドの起動に失敗しました")
+        logger.info(f"キープアライブスレッドを開始しました (間隔: {interval}秒)")
     
     return thread
 
 def stop_keepalive() -> None:
-    """
-    キープアライブスレッドを停止する関数
-    """
+    """キープアライブスレッドを停止"""
     stop_event.set()
     logger.info("キープアライブスレッドの停止を要求しました")
-    print("キープアライブスレッドの停止を要求しました")
-
-# 単体テスト用のコード
-if __name__ == "__main__":
-    print("ロバストキープアライブモジュールの単体テスト開始")
-    
-    # キープアライブスレッドを起動
-    keepalive_thread = start_keepalive(port=8080, interval=30)
-    
-    try:
-        # テスト用にメインスレッドで少し待機
-        print("Ctrl+Cで終了します...")
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nキーボード割り込みを検知しました。終了します...")
-    finally:
-        # キープアライブスレッドを停止
-        stop_keepalive()
-        
-        # スレッドの終了を最大10秒待機
-        keepalive_thread.join(timeout=10)
-        
-        print("テスト終了")

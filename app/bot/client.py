@@ -53,29 +53,6 @@ class ThreadBot(commands.Bot):
             logger.info(f"サーバー: {guild.name} (ID: {guild.id})")
             text_channels = len(guild.text_channels)
             logger.info(f"  テキストチャンネル数: {text_channels}")
-            
-            # 各チャンネルの情報とBotの権限を表示
-            for channel in guild.text_channels:
-                permissions = channel.permissions_for(guild.me)
-                can_read = permissions.read_messages
-                can_send = permissions.send_messages
-                can_create_thread = permissions.create_public_threads
-                logger.info(f"  チャンネル: {channel.name} (ID: {channel.id})")
-                logger.info(f"    権限 - 読み取り: {can_read}, 送信: {can_send}, スレッド作成: {can_create_thread}")
-                
-                # 有効なチャンネルかどうかを確認
-                is_enabled = not ENABLED_CHANNEL_IDS or channel.id in ENABLED_CHANNEL_IDS
-                logger.info(f"    有効なチャンネル: {is_enabled}")
-        
-        # 有効なチャンネルの情報をログに記録
-        if ENABLED_CHANNEL_IDS:
-            channel_count = len(ENABLED_CHANNEL_IDS)
-            logger.info(f"有効なチャンネル数: {channel_count}")
-            # 各IDを個別に表示し、重複を防ぐ
-            channel_ids_str = ", ".join([str(channel_id) for channel_id in ENABLED_CHANNEL_IDS])
-            logger.info(f"有効なチャンネルID: {channel_ids_str}")
-        else:
-            logger.info("有効なチャンネルが指定されていません。すべてのチャンネルで動作します。")
         
         # ステータスを設定
         activity = discord.Activity(
