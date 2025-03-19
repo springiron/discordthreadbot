@@ -26,11 +26,16 @@ def should_create_thread(message: discord.Message, trigger_keywords: List[str]) 
     if not message.content:
         return False
     
+    # デバッグ情報を追加
+    logger.debug(f"トリガーキーワードチェック: {trigger_keywords}")
+    
     # メッセージ内容にトリガーキーワードが含まれるかチェック
     for keyword in trigger_keywords:
         if keyword in message.content:
+            logger.debug(f"キーワード '{keyword}' が見つかりました: {message.content[:30]}...")
             return True
     
+    logger.debug(f"いずれのキーワードも見つかりませんでした: {message.content[:30]}...")
     return False
 
 async def create_thread_from_message(
@@ -51,6 +56,7 @@ async def create_thread_from_message(
     """
     try:
         # スレッドを作成
+        logger.info(f"スレッド作成開始: メッセージID={message.id}, チャンネルID={message.channel.id}")
         thread = await message.create_thread(
             name=name,
             auto_archive_duration=auto_archive_duration
@@ -60,10 +66,10 @@ async def create_thread_from_message(
         return thread
         
     except discord.Forbidden:
-        logger.error("スレッド作成に必要な権限がありません")
+        logger.error(f"スレッド作成に必要な権限がありません: チャンネルID={message.channel.id}")
     except discord.HTTPException as e:
-        logger.error(f"スレッド作成中にHTTPエラーが発生しました: {e}")
+        logger.error(f"スレッド作成中にHTTPエラーが発生しました: {e}, チャンネルID={message.channel.id}")
     except Exception as e:
-        logger.error(f"スレッド作成中に予期しないエラーが発生しました: {e}")
+        logger.error(f"スレッド作成中に予期しないエラーが発生しました: {e}, チャンネルID={message.channel.id}")
     
     return None

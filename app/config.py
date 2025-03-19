@@ -79,7 +79,7 @@ class ConfigSchema:
             "type": set,
             "default": set(),
             "env_var": "ENABLED_CHANNEL_IDS",
-            "converter": lambda x: {int(channel_id.strip()) for channel_id in x.split(",") if channel_id.strip()} if isinstance(x, str) else x,
+            "converter": lambda x: {int(channel_id.strip()) for channel_id in x.split(",") if channel_id.strip() and channel_id.strip().isdigit()} if isinstance(x, str) else x,
             "description": "有効なチャンネルIDのリスト（カンマ区切り）"
         }
         

@@ -41,11 +41,13 @@ class ThreadBot(commands.Bot):
         """
         logger.info(f"{self.user.name} としてログインしました (ID: {self.user.id})")
         
-        # 有効なチャンネルの情報をログに記録
+        # 有効なチャンネルの情報をログに記録 - 修正版
         if ENABLED_CHANNEL_IDS:
             channel_count = len(ENABLED_CHANNEL_IDS)
             logger.info(f"有効なチャンネル数: {channel_count}")
-            logger.info(f"有効なチャンネルID: {', '.join(str(id) for id in ENABLED_CHANNEL_IDS)}")
+            # 各IDを個別に表示し、重複を防ぐ
+            channel_ids_str = ", ".join([str(channel_id) for channel_id in ENABLED_CHANNEL_IDS])
+            logger.info(f"有効なチャンネルID: {channel_ids_str}")
         else:
             logger.info("有効なチャンネルが指定されていません。すべてのチャンネルで動作します。")
         
@@ -85,8 +87,13 @@ class ThreadBot(commands.Bot):
         Args:
             message: 処理するDiscordメッセージ
         """
+        # デバッグ情報を追加
+        channel_id = message.channel.id
+        logger.debug(f"メッセージ受信: チャンネルID={channel_id}, 内容={message.content[:20]}...")
+        
         # 指定されたチャンネルIDのリストが存在し、かつ現在のチャンネルがリストに含まれていない場合は処理をスキップ
-        if ENABLED_CHANNEL_IDS and message.channel.id not in ENABLED_CHANNEL_IDS:
+        if ENABLED_CHANNEL_IDS and channel_id not in ENABLED_CHANNEL_IDS:
+            logger.debug(f"チャンネル {channel_id} は有効リスト外のため無視します。有効なチャンネル: {ENABLED_CHANNEL_IDS}")
             return
             
         # スレッド作成条件をチェック
