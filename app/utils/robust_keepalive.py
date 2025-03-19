@@ -9,7 +9,7 @@ Koyebなどのクラウドサービスでのインスタンスのスリープを
 特徴:
 - 30秒間隔での高頻度キープアライブ
 - 複数タイプのアクティビティ（HTTP、ファイルI/O、CPU、メモリ）
-- 標準出力とログファイルへのダブル出力
+- 標準出力を中心とした可視性
 - 堅牢なエラーハンドリング
 - シンプルで専用のモジュール設計
 """
@@ -32,14 +32,13 @@ except ImportError:
     REQUESTS_AVAILABLE = False
     print("警告: requestsライブラリがインストールされていません。HTTP活動は無効化されます。")
 
-# ロギングの設定
+# ロギングの設定 - 標準出力のみ使用
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(
     level=logging.INFO,
     format=log_format,
     handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("keepalive.log")
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger('robust_keepalive')
@@ -108,51 +107,91 @@ def generate_file_activity() -> bool:
     """
     try:
         # キープアライブ情報をファイルに書き込み
-        keepalive_dir = "keepalive_data"
-        os.makedirs(keepalive_dir, exist_ok=True)
+        # 書き込み可能なディレクトリを使用
+        try:
+            # tmpディレクトリを優先的に使用
+            if os.path.exists('/tmp') and os.access('/tmp', os.W_OK):
+                keepalive_dir = "/tmp/keepalive_data"
+            else:
+                # カレントディレクトリに作成
+                keepalive_dir = "keepalive_data"
+                
+            os.makedirs(keepalive_dir, exist_ok=True)
+        except (PermissionError, OSError):
+            # どちらのディレクトリも作成できない場合はカレントディレクトリに直接書き込み
+            keepalive_dir = "."
         
         # タイムスタンプを含むファイル名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{keepalive_dir}/keepalive_{timestamp}.json"
+        filename = f"{keepalive_dir}/keepalive_{timestamp}.txt"
         
-        # ステータス情報を記録
-        data = {
-            "timestamp": time.time(),
-            "datetime": datetime.now().isoformat(),
-            "cycle": activity_state["cycle_count"],
-            "instance_id": activity_state["instance_id"],
-            "uptime_seconds": time.time() - activity_state["start_time"]
-        }
+        # ステータス情報を記録 - プレーンテキスト形式（権限問題回避）
+        data = (
+            f"Timestamp: {time.time()}\n"
+            f"Datetime: {datetime.now().isoformat()}\n"
+            f"Cycle: {activity_state['cycle_count']}\n"
+            f"Instance ID: {activity_state['instance_id']}\n"
+            f"Uptime (seconds): {time.time() - activity_state['start_time']}\n"
+        )
         
         # 定期的に古いファイルをクリーンアップ（10回ごと）
         if activity_state["file_operations"] % 10 == 0:
             try:
-                files = [f for f in os.listdir(keepalive_dir) if f.startswith("keepalive_")]
-                if len(files) > 20:  # 20ファイル以上あれば古いものを削除
-                    files.sort()
-                    for old_file in files[:len(files)-20]:
-                        os.remove(os.path.join(keepalive_dir, old_file))
-                    logger.info(f"古いキープアライブファイルをクリーンアップしました ({len(files)-20}件)")
+                # keepalive_dirがアクセス可能な場合のみ
+                if os.path.exists(keepalive_dir) and os.access(keepalive_dir, os.R_OK | os.W_OK):
+                    files = [f for f in os.listdir(keepalive_dir) if f.startswith("keepalive_")]
+                    if len(files) > 20:  # 20ファイル以上あれば古いものを削除
+                        files.sort()
+                        for old_file in files[:len(files)-20]:
+                            try:
+                                os.remove(os.path.join(keepalive_dir, old_file))
+                            except:
+                                pass  # 個別のファイル削除エラーは無視
+                        logger.info(f"古いキープアライブファイルをクリーンアップしました ({len(files)-20}件)")
             except Exception as cleanup_error:
-                logger.warning(f"ファイルクリーンアップでエラー: {cleanup_error}")
+                # クリーンアップエラーは無視して継続
+                pass
         
         # 新しいファイルを書き込み
-        with open(filename, "w") as f:
-            json.dump(data, f, indent=2)
+        try:
+            with open(filename, "w") as f:
+                f.write(data)
+                
+            # メインのステータスファイルも更新
+            with open(f"{keepalive_dir}/keepalive_current.txt", "w") as f:
+                activity_state["file_operations"] += 1
+                activity_state["last_activity"] = "file"
+                
+                # プレーンテキスト形式で書き込み
+                f.write(f"Instance ID: {activity_state['instance_id']}\n")
+                f.write(f"Last Updated: {datetime.now().isoformat()}\n")
+                f.write(f"Cycle Count: {activity_state['cycle_count']}\n")
+                f.write(f"HTTP Requests: {activity_state['http_requests']}\n")
+                f.write(f"File Operations: {activity_state['file_operations']}\n")
+                f.write(f"CPU Activities: {activity_state['cpu_activities']}\n")
+                f.write(f"Memory Activities: {activity_state['memory_activities']}\n")
+                f.write(f"Errors: HTTP={activity_state['errors']['http']}, "
+                       f"File={activity_state['errors']['file']}, "
+                       f"CPU={activity_state['errors']['cpu']}, "
+                       f"Memory={activity_state['errors']['memory']}\n")
             
-        # メインのステータスファイルも更新
-        with open(f"{keepalive_dir}/keepalive_current.json", "w") as f:
+            # 3回ごとに詳細ログを出力
+            if activity_state["file_operations"] % 3 == 0:
+                output_msg = f"キープアライブ: ファイル活動 #{activity_state['file_operations']} 実行 (場所: {keepalive_dir})"
+                logger.info(output_msg)
+                print(output_msg)  # 標準出力にも表示
+                
+            return True
+        except Exception as file_error:
+            activity_state["errors"]["file"] += 1
+            logger.error(f"ファイル書き込み中にエラーが発生: {file_error}")
+            
+            # 極端な場合: ファイルに書き込めない場合でもアクティビティは成功したとみなす
+            # キープアライブの主な目的はアクティビティを生成することであり、ログの保存ではない
             activity_state["file_operations"] += 1
             activity_state["last_activity"] = "file"
-            json.dump(activity_state, f, indent=2)
-        
-        # 3回ごとに詳細ログを出力
-        if activity_state["file_operations"] % 3 == 0:
-            output_msg = f"キープアライブ: ファイル活動 #{activity_state['file_operations']} 実行"
-            logger.info(output_msg)
-            print(output_msg)  # 標準出力にも表示
+            return True
             
-        return True
     except Exception as e:
         activity_state["errors"]["file"] += 1
         logger.error(f"ファイル活動中にエラーが発生: {e}")
