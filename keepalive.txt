@@ -1,2 +1,0 @@
-Keepalive timestamp: 2025-03-19T17:16:22.868766
-Instance ID: 3465
