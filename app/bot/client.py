@@ -249,12 +249,14 @@ class ThreadBot(commands.Bot):
         """グローバル設定を更新"""
         global TRIGGER_KEYWORDS, ENABLED_CHANNEL_IDS, THREAD_AUTO_ARCHIVE_DURATION, THREAD_NAME_TEMPLATE, ADMIN_USER_IDS
         
+        # 設定値は config.py の update_setting() で既に適切な型に変換されているため
+        # ここでは単にグローバル変数に代入するだけでOK
         if setting_name == "TRIGGER_KEYWORDS":
             TRIGGER_KEYWORDS = new_value
         elif setting_name == "ENABLED_CHANNEL_IDS":
             ENABLED_CHANNEL_IDS = new_value
         elif setting_name == "THREAD_AUTO_ARCHIVE_DURATION":
-            THREAD_AUTO_ARCHIVE_DURATION = int(new_value)
+            THREAD_AUTO_ARCHIVE_DURATION = new_value
         elif setting_name == "THREAD_NAME_TEMPLATE":
             THREAD_NAME_TEMPLATE = new_value
         elif setting_name == "ADMIN_USER_IDS":
@@ -262,16 +264,11 @@ class ThreadBot(commands.Bot):
     
     async def _send_config_update_message(self, ctx, setting_name, new_value):
         """設定更新メッセージを送信"""
-
         if setting_name == "TRIGGER_KEYWORDS":
-            
-            # TRIGGER_KEYWORDSの値を整形(カンマ区切りがあれば分割)
-
-
-            # value_str = ", ".join(f"`{kw}`" for kw in TRIGGER_KEYWORDS)
-            print(TRIGGER_KEYWORDS)
-            await ctx.send(f"✅ トリガーキーワードを更新しました: {TRIGGER_KEYWORDS}")
-
+            # キーワードリストの整形
+            keywords_list = TRIGGER_KEYWORDS
+            value_str = ", ".join(f"`{kw}`" for kw in keywords_list) if keywords_list else "（なし）"
+            await ctx.send(f"✅ トリガーキーワードを更新しました: {value_str}")
         elif setting_name == "ENABLED_CHANNEL_IDS":
             if ENABLED_CHANNEL_IDS:
                 channels = []
@@ -299,8 +296,8 @@ class ThreadBot(commands.Bot):
             value_str = ", ".join(admins) if admins else "（なし）"
             await ctx.send(f"✅ 管理者ユーザーを更新しました: {value_str}")
         else:
-            await ctx.send(f"✅ 設定 `{setting_name}` を `{new_value}` に更新しました") 
-      
+            await ctx.send(f"✅ 設定 `{setting_name}` を更新しました")
+        
     
     def is_admin(self, user: discord.User) -> bool:
         """ユーザーが管理者権限を持っているか確認"""

@@ -129,7 +129,14 @@ def load_config():
                 config_values[key] = [kw.strip() for kw in value.split(",") if kw.strip()]
             elif key in ["ENABLED_CHANNEL_IDS", "ADMIN_USER_IDS"] and isinstance(value, str):
                 try:
-                    config_values[key] = {int(x.strip()) for x in value.split(",") if x.strip() and x.strip().isdigit()}
+                    # カンマ区切りの場合とカンマ区切りでない場合を処理
+                    if "," in value:
+                        config_values[key] = {int(x.strip()) for x in value.split(",") if x.strip() and x.strip().isdigit()}
+                    else:
+                        # 単一の値の場合
+                        value = value.strip()
+                        if value.isdigit():
+                            config_values[key] = {int(value)}
                 except ValueError:
                     logger.error(f"環境変数 {key} の値が不正です: {value}")
             elif key == "THREAD_AUTO_ARCHIVE_DURATION" and isinstance(value, str):
@@ -137,12 +144,12 @@ def load_config():
                     config_values[key] = int(value)
                 except ValueError:
                     logger.error(f"環境変数 {key} の値が不正です: {value}")
-                try:
-                    config_values[key] = int(value)
-                except ValueError:
-                    logger.error(f"環境変数 {key} の値が不正です: {value}")
             else:
                 config_values[key] = value
+    
+    # 環境変数から読み込んだ設定値をconfig.jsonに保存
+    # これにより.envの設定値が保持される
+    save_config()
     
     # DISCORD_BOT_TOKENが設定されていない場合は警告
     if not config_values["DISCORD_BOT_TOKEN"]:
@@ -204,11 +211,23 @@ def update_setting(name, value):
     setting_type = EDITABLE_SETTINGS[name]["type"]
     try:
         if setting_type == "list" and isinstance(value, str):
-            # TRIGGER_KEYWORDSの場合、単一のキーワードも適切に処理
+            # カンマで区切られた文字列をリストに変換
             value = [item.strip() for item in value.split(",") if item.strip()]
             logger.info(f"キーワード変換結果: {value}")
         elif setting_type == "set" and isinstance(value, str):
-            value = {int(item.strip()) for item in value.split(",") if item.strip() and item.strip().isdigit()}
+            # カンマで区切られた文字列をsetに変換（数値のみ）
+            # 単一の値の場合も適切に処理
+            if "," in value:
+                value = {int(item.strip()) for item in value.split(",") if item.strip() and item.strip().isdigit()}
+            else:
+                # 単一の値の場合
+                value = value.strip()
+                if value.isdigit():
+                    value = {int(value)}
+                else:
+                    logger.error(f"設定 {name} の値が数値ではありません: {value}")
+                    return False
+            logger.info(f"ID変換結果: {value}")
         elif setting_type == "int" and isinstance(value, str):
             value = int(value)
             # THREAD_AUTO_ARCHIVE_DURATIONは特定の値のみ許可
@@ -218,16 +237,6 @@ def update_setting(name, value):
     except ValueError:
         logger.error(f"設定 {name} の値変換に失敗しました: {value}")
         return False
-    
-    # 値を更新
-    config_values[name] = value
-    logger.info(f"設定 {name} を更新しました: {value}")
-    
-    # 設定を保存
-    save_config()
-    
-    return True
-
 def get_editable_settings():
     """
     編集可能な設定を取得
