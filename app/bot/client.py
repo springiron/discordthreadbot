@@ -123,6 +123,7 @@ class ThreadBot(commands.Bot):
                 return
             
             # 設定更新モード
+            print(update_setting(setting_name, new_value))
             if update_setting(setting_name, new_value):
                 self._update_global_settings(setting_name, new_value)
                 await self._send_config_update_message(ctx, setting_name, new_value)
@@ -214,6 +215,7 @@ class ThreadBot(commands.Bot):
                 return ", ".join(str(item) for item in value) if value else "（なし）"
             return str(value) if value is not None else "（なし）"
             
+    
     async def show_config_list(self, ctx):
         """編集可能な設定一覧を表示"""
         editable_settings = get_editable_settings()
@@ -261,14 +263,14 @@ class ThreadBot(commands.Bot):
             THREAD_NAME_TEMPLATE = new_value
         elif setting_name == "ADMIN_USER_IDS":
             ADMIN_USER_IDS = new_value
-    
+
     async def _send_config_update_message(self, ctx, setting_name, new_value):
         """設定更新メッセージを送信"""
         if setting_name == "TRIGGER_KEYWORDS":
             # キーワードリストの整形
             keywords_list = TRIGGER_KEYWORDS
-            value_str = ", ".join(f"`{kw}`" for kw in keywords_list) if keywords_list else "（なし）"
-            await ctx.send(f"✅ トリガーキーワードを更新しました: {value_str}")
+            print(keywords_list)
+            await ctx.send(f"✅ トリガーキーワードを更新しました: {keywords_list}")
         elif setting_name == "ENABLED_CHANNEL_IDS":
             if ENABLED_CHANNEL_IDS:
                 channels = []

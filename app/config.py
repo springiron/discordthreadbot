@@ -212,11 +212,14 @@ def update_setting(name, value):
     try:
         if setting_type == "list" and isinstance(value, str):
             # カンマで区切られた文字列をリストに変換
-            value = [item.strip() for item in value.split(",") if item.strip()]
+            if "," in value:
+                value = [item.strip() for item in value.split(",") if item.strip()]
+            else:
+                # カンマがない場合は単一の値としてリストに
+                value = [value.strip()] if value.strip() else []
             logger.info(f"キーワード変換結果: {value}")
         elif setting_type == "set" and isinstance(value, str):
             # カンマで区切られた文字列をsetに変換（数値のみ）
-            # 単一の値の場合も適切に処理
             if "," in value:
                 value = {int(item.strip()) for item in value.split(",") if item.strip() and item.strip().isdigit()}
             else:
@@ -237,6 +240,17 @@ def update_setting(name, value):
     except ValueError:
         logger.error(f"設定 {name} の値変換に失敗しました: {value}")
         return False
+    
+    # 値を更新
+    config_values[name] = value
+    logger.info(f"設定 {name} を更新しました: {value}")
+    
+    # 設定を保存
+    save_config()
+    
+    return True
+
+
 def get_editable_settings():
     """
     編集可能な設定を取得
