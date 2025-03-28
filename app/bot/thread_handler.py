@@ -27,6 +27,11 @@ def should_create_thread(message: discord.Message, trigger_keywords: List[str]) 
     if not message.content:
         return False
     
+    # @[数値]パターンのチェック（例: @1, @123など）
+    at_number_pattern = re.compile(r'@\d+')
+    if at_number_pattern.search(message.content):
+        return True
+    
     # メッセージ内容にトリガーキーワードが含まれるかチェック
     for keyword in trigger_keywords:
         # 大文字小文字を区別せずにキーワードを検索
