@@ -26,8 +26,8 @@ DEFAULT_CONFIG = {
     "DISCORD_BOT_TOKEN": "",  # 必須、環境変数から取得
     "DEBUG_MODE": False,
     "LOG_LEVEL": "INFO",
-    "THREAD_AUTO_ARCHIVE_DURATION": 10080,  # 1週間（分）
-    "THREAD_NAME_TEMPLATE": "{username}の募集",
+    "THREAD_AUTO_ARCHIVE_DURATION": 60,  # 1時間（分）
+    "THREAD_NAME_TEMPLATE": "[✅ 募集中]{username}の募集",
     "TRIGGER_KEYWORDS": ["募集"],
     "ENABLED_CHANNEL_IDS": set(),
     "ADMIN_USER_IDS": set(),
@@ -36,7 +36,11 @@ DEFAULT_CONFIG = {
         "guilds": True,
         "messages": True,
         "guild_messages": True,
-    }
+    },
+    # 以下の設定を追加
+    "THREAD_CLOSE_KEYWORDS": ["〆", "締め", "しめ", "〆切", "締切", "しめきり", "closed", "close"],
+    "THREAD_CLOSED_NAME_TEMPLATE": "[⛔ 募集終了]{original_name}",
+    "THREAD_MONITORING_DURATION": 60,  # 1時間（分）
 }
 
 # 編集可能な設定と説明
@@ -70,6 +74,32 @@ EDITABLE_SETTINGS = {
         "type": "set",
         "options": [],
         "help_text": "Bot設定を変更できる管理者のユーザーIDを設定します。複数指定する場合はカンマ区切りで入力してください。"
+    },
+    # 以下の設定を追加
+    "THREAD_CLOSE_KEYWORDS": {
+        "description": "スレッド締め切りのトリガーとなるキーワード（カンマ区切り）",
+        "type": "list",
+        "options": [],
+        "help_text": "スレッド締め切りのトリガーとなるキーワードを設定します。複数指定する場合はカンマ区切りで入力してください。"
+    },
+    "THREAD_CLOSED_NAME_TEMPLATE": {
+        "description": "スレッド締め切り後の名前テンプレート（{username}は元のスレッド名に置換）",
+        "type": "str",
+        "options": [],
+        "help_text": "スレッド締め切り後の名前テンプレートを設定します。{original_name}は元のスレッド名に置き換えられます。"
+    },
+    "THREAD_MONITORING_DURATION": {
+        "description": "スレッド監視時間（分）",
+        "type": "int",
+        "options": [60, 180, 360, 720, 1440, 4320, 10080, 43200],  # 1時間, 3時間, 6時間, 12時間, 1日, 3日, 1週間, 1ヶ月
+        "help_text": "Botがスレッドを監視する時間を設定します。この時間が経過するとBotはスレッドから退出します。"
+    },
+    "BOT_INTENTS": {
+        "message_content": True,
+        "guilds": True,
+        "messages": True,
+        "guild_messages": True,
+        "guild_reactions": True,  # リアクション権限を追加（ボタン操作に必要）
     }
 }
 
@@ -280,7 +310,39 @@ ENABLED_CHANNEL_IDS = config_values["ENABLED_CHANNEL_IDS"]
 ADMIN_USER_IDS = config_values["ADMIN_USER_IDS"]
 BOT_INTENTS = config_values["BOT_INTENTS"]
 
+# グローバル変数としてエクスポート用変数を追加（末尾に追加）
+THREAD_CLOSE_KEYWORDS = config_values["THREAD_CLOSE_KEYWORDS"]
+THREAD_CLOSED_NAME_TEMPLATE = config_values["THREAD_CLOSED_NAME_TEMPLATE"]
+THREAD_MONITORING_DURATION = config_values["THREAD_MONITORING_DURATION"]
+
+
 # Bot設定の辞書形式
 BOT_CONFIG = {
     "BOT_INTENTS": BOT_INTENTS
 }
+
+# _update_global_settings 関数に新しい設定の更新ケースを追加
+def _update_global_settings(setting_name, new_value):
+    """グローバル設定を更新"""
+    global TRIGGER_KEYWORDS, ENABLED_CHANNEL_IDS, THREAD_AUTO_ARCHIVE_DURATION, THREAD_NAME_TEMPLATE, ADMIN_USER_IDS
+    global THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION  # 追加
+    
+    # 設定値は config.py の update_setting() で既に適切な型に変換されているため
+    # ここでは単にグローバル変数に代入するだけでOK
+    if setting_name == "TRIGGER_KEYWORDS":
+        TRIGGER_KEYWORDS = new_value
+    elif setting_name == "ENABLED_CHANNEL_IDS":
+        ENABLED_CHANNEL_IDS = new_value
+    elif setting_name == "THREAD_AUTO_ARCHIVE_DURATION":
+        THREAD_AUTO_ARCHIVE_DURATION = new_value
+    elif setting_name == "THREAD_NAME_TEMPLATE":
+        THREAD_NAME_TEMPLATE = new_value
+    elif setting_name == "ADMIN_USER_IDS":
+        ADMIN_USER_IDS = new_value
+    # 以下の条件分岐を追加
+    elif setting_name == "THREAD_CLOSE_KEYWORDS":
+        THREAD_CLOSE_KEYWORDS = new_value
+    elif setting_name == "THREAD_CLOSED_NAME_TEMPLATE":
+        THREAD_CLOSED_NAME_TEMPLATE = new_value
+    elif setting_name == "THREAD_MONITORING_DURATION":
+        THREAD_MONITORING_DURATION = new_value

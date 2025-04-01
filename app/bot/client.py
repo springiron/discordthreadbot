@@ -13,9 +13,13 @@ import re
 from config import (
     BOT_CONFIG, TRIGGER_KEYWORDS, THREAD_AUTO_ARCHIVE_DURATION, 
     THREAD_NAME_TEMPLATE, ENABLED_CHANNEL_IDS, ADMIN_USER_IDS, 
+    THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION,
     update_setting, get_editable_settings
 )
-from bot.thread_handler import should_create_thread, create_thread_from_message
+from bot.thread_handler import (
+    should_create_thread, create_thread_from_message,
+    process_thread_message, monitored_threads
+)
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -39,6 +43,24 @@ class ThreadBot(commands.Bot):
         # コマンドの登録
         self.add_commands()
         
+        # イベントリスナーの追加
+        self.add_listeners()
+        
+    def add_listeners(self):
+        """イベントリスナーを追加"""
+        
+        @self.event
+        async def on_interaction(interaction: discord.Interaction):
+            """インタラクション処理"""
+            # ボタンインタラクションのみを処理
+            if interaction.type == discord.InteractionType.component:
+                # 締め切りボタンかどうかを確認
+                if interaction.data.get("custom_id", "").startswith("close_thread_"):
+                    # ボタンのコールバックはボタンクラス内で処理されるため、
+                    # ここでは追加のログ記録のみ行う
+                    logger.debug(f"締め切りボタンが押されました: ユーザー={interaction.user.display_name}, "
+                            f"チャンネル={interaction.channel.name if interaction.channel else 'unknown'}")
+        
     async def process_message(self, message: discord.Message):
         """
         メッセージを処理し、必要に応じてスレッドを作成
@@ -56,21 +78,46 @@ class ThreadBot(commands.Bot):
                 # スレッド名を生成
                 thread_name = THREAD_NAME_TEMPLATE.format(username=message.author.display_name)
                 
+                # thread_handler.py の関数を呼び出すためのパラメータを準備
+                create_args = {
+                    "message": message,
+                    "name": thread_name,
+                    "auto_archive_duration": THREAD_AUTO_ARCHIVE_DURATION,
+                    "monitoring_duration": THREAD_MONITORING_DURATION,
+                    "close_keywords": THREAD_CLOSE_KEYWORDS,
+                    "closed_name_template": THREAD_CLOSED_NAME_TEMPLATE,
+                    "bot": self  # ここでボットインスタンスを渡す
+                }
+                
                 # スレッドを作成
-                thread = await create_thread_from_message(
-                    message=message,
-                    name=thread_name,
-                    auto_archive_duration=THREAD_AUTO_ARCHIVE_DURATION
-                )
+                thread = await create_thread_from_message(**create_args)
                 
                 if thread:
                     logger.info(f"スレッド '{thread.name}' (ID: {thread.id}) 作成完了")
-                    # スレッドからBotを退出
-                    await asyncio.sleep(1)
-                    await thread.leave()
+                    
+                    # スレッドからBotを退出するのは監視時間が0の場合のみ
+                    if THREAD_MONITORING_DURATION <= 0:
+                        await asyncio.sleep(1)
+                        await thread.leave()
+                        logger.info(f"スレッド '{thread.name}' (ID: {thread.id}) からBotが退出しました")
                     
             except Exception as e:
                 logger.error(f"スレッド作成エラー: {e}")
+    
+    async def process_thread_message(self, message: discord.Message):
+        """
+        スレッド内のメッセージを処理し、必要に応じてスレッド名を変更
+        """
+        # スレッド内のメッセージのみを処理
+        if not isinstance(message.channel, discord.Thread):
+            return
+            
+        # スレッド内のメッセージを処理
+        await process_thread_message(
+            message=message,
+            close_keywords=THREAD_CLOSE_KEYWORDS,
+            closed_name_template=THREAD_CLOSED_NAME_TEMPLATE
+        )
             
     def add_commands(self):
         """コマンドを登録"""
@@ -145,6 +192,7 @@ class ThreadBot(commands.Bot):
                     "!config": "Bot設定を表示・変更します（管理者用）",
                     "!keywords": "トリガーキーワード一覧を表示します",
                     "!channels": "Bot有効チャンネル一覧を表示します",
+                    "!closekeywords": "締め切りキーワード一覧を表示します",
                     "!help": "このヘルプを表示します",
                 }
                 
@@ -152,7 +200,7 @@ class ThreadBot(commands.Bot):
                     embed.add_field(name=cmd, value=desc, inline=False)
                 
                 # 現在のキーワード表示
-                embed.add_field(name="現在のトリガーキーワード", value=TRIGGER_KEYWORDS, inline=False)
+                embed.add_field(name="現在のトリガーキーワード", value=", ".join(TRIGGER_KEYWORDS), inline=False)
                 
                 # 管理者情報
                 is_admin = self.is_admin(ctx.author)
@@ -165,9 +213,7 @@ class ThreadBot(commands.Bot):
                 if command:
                     await ctx.send(f"**{command.name}**: {command.help}")
                 else:
-                    await ctx.send(f"コマンド `{command_name}` は存在しません。")
-        
-        @self.command(name="keywords", help="現在のトリガーキーワード一覧を表示します")
+                    await ctx.send(f"コマンド `{command_name}` は存在しません。")@self.command(name="keywords", help="現在のトリガーキーワード一覧を表示します")
         async def keywords_command(ctx):
             keywords = ", ".join(f"`{kw}`" for kw in TRIGGER_KEYWORDS) if TRIGGER_KEYWORDS else "（なし）"
             embed = discord.Embed(
@@ -207,6 +253,67 @@ class ThreadBot(commands.Bot):
                 )
             
             await ctx.send(embed=embed)
+
+        @self.command(name="closekeywords", help="締め切りキーワード一覧を表示します")
+        async def closekeywords_command(ctx):
+            keywords = ", ".join(f"`{kw}`" for kw in THREAD_CLOSE_KEYWORDS) if THREAD_CLOSE_KEYWORDS else "（なし）"
+            embed = discord.Embed(
+                title="締め切りキーワード",
+                description=f"以下のキーワードでスレッドを締め切ります：\n{keywords}",
+                color=discord.Color.green()
+            )
+            
+            if self.is_admin(ctx.author):
+                embed.add_field(
+                    name="変更方法",
+                    value="`!config THREAD_CLOSE_KEYWORDS キーワード1,キーワード2`",
+                    inline=False
+                )
+            
+            await ctx.send(embed=embed)
+
+        @self.command(name="debug", help="デバッグ情報を表示します（管理者用）")
+        async def debug_command(ctx):
+            # 管理者権限チェック
+            if not self.is_admin(ctx.author):
+                await ctx.send("⚠️ このコマンドは管理者のみ使用できます。")
+                return
+                
+            from bot.thread_handler import get_monitored_threads_status, monitored_threads
+            from config import DEBUG_MODE
+            
+            if not DEBUG_MODE:
+                await ctx.send("⚠️ デバッグモードが無効です。環境変数 `DEBUG_MODE=true` を設定してBotを再起動してください。")
+                return
+                
+            # 監視中のスレッド情報を取得
+            threads_status = get_monitored_threads_status()
+            
+            if not threads_status:
+                await ctx.send("📊 現在監視中のスレッドはありません。")
+                return
+                
+            # 情報を表示
+            embed = discord.Embed(
+                title="🔍 監視中スレッド情報",
+                description=f"現在 {len(threads_status)} 個のスレッドを監視中",
+                color=discord.Color.blue()
+            )
+            
+            for thread_id, info in threads_status.items():
+                field_value = (
+                    f"**作成者:** {info['author']}\n"
+                    f"**作成日時:** {info['created_at']}\n"
+                    f"**監視残り時間:** {info['monitoring_remaining_minutes']}分\n"
+                    f"**アーカイブ時間:** {info['auto_archive_duration']}分"
+                )
+                embed.add_field(
+                    name=f"💬 {info['name']} (ID: {thread_id})",
+                    value=field_value,
+                    inline=False
+                )
+            
+            await ctx.send(embed=embed)
             
         # ヘルパーメソッド
         def _format_setting_value(self, value):
@@ -214,8 +321,7 @@ class ThreadBot(commands.Bot):
             if isinstance(value, (list, set)):
                 return ", ".join(str(item) for item in value) if value else "（なし）"
             return str(value) if value is not None else "（なし）"
-            
-    
+               
     async def show_config_list(self, ctx):
         """編集可能な設定一覧を表示"""
         editable_settings = get_editable_settings()
@@ -249,7 +355,9 @@ class ThreadBot(commands.Bot):
     
     def _update_global_settings(self, setting_name, new_value):
         """グローバル設定を更新"""
-        global TRIGGER_KEYWORDS, ENABLED_CHANNEL_IDS, THREAD_AUTO_ARCHIVE_DURATION, THREAD_NAME_TEMPLATE, ADMIN_USER_IDS
+        global TRIGGER_KEYWORDS, ENABLED_CHANNEL_IDS, THREAD_AUTO_ARCHIVE_DURATION
+        global THREAD_NAME_TEMPLATE, ADMIN_USER_IDS, THREAD_CLOSE_KEYWORDS
+        global THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION
         
         # 設定値は config.py の update_setting() で既に適切な型に変換されているため
         # ここでは単にグローバル変数に代入するだけでOK
@@ -263,13 +371,18 @@ class ThreadBot(commands.Bot):
             THREAD_NAME_TEMPLATE = new_value
         elif setting_name == "ADMIN_USER_IDS":
             ADMIN_USER_IDS = new_value
+        elif setting_name == "THREAD_CLOSE_KEYWORDS":
+            THREAD_CLOSE_KEYWORDS = new_value
+        elif setting_name == "THREAD_CLOSED_NAME_TEMPLATE":
+            THREAD_CLOSED_NAME_TEMPLATE = new_value
+        elif setting_name == "THREAD_MONITORING_DURATION":
+            THREAD_MONITORING_DURATION = new_value
 
     async def _send_config_update_message(self, ctx, setting_name, new_value):
         """設定更新メッセージを送信"""
         if setting_name == "TRIGGER_KEYWORDS":
             # キーワードリストの整形
-            keywords_list = TRIGGER_KEYWORDS
-            print(keywords_list)
+            keywords_list = ", ".join(f"`{kw}`" for kw in TRIGGER_KEYWORDS) if TRIGGER_KEYWORDS else "（なし）"
             await ctx.send(f"✅ トリガーキーワードを更新しました: {keywords_list}")
         elif setting_name == "ENABLED_CHANNEL_IDS":
             if ENABLED_CHANNEL_IDS:
@@ -297,6 +410,17 @@ class ThreadBot(commands.Bot):
                 admins.append(user_name)
             value_str = ", ".join(admins) if admins else "（なし）"
             await ctx.send(f"✅ 管理者ユーザーを更新しました: {value_str}")
+        elif setting_name == "THREAD_CLOSE_KEYWORDS":
+            keywords_list = ", ".join(f"`{kw}`" for kw in THREAD_CLOSE_KEYWORDS) if THREAD_CLOSE_KEYWORDS else "（なし）"
+            await ctx.send(f"✅ 締め切りキーワードを更新しました: {keywords_list}")
+        elif setting_name == "THREAD_CLOSED_NAME_TEMPLATE":
+            example = THREAD_CLOSED_NAME_TEMPLATE.format(original_name=f"{ctx.author.display_name}の募集")
+            await ctx.send(f"✅ 締め切り後のスレッド名テンプレートを更新しました: `{THREAD_CLOSED_NAME_TEMPLATE}`\n例: {example}")
+        elif setting_name == "THREAD_MONITORING_DURATION":
+            duration_map = {60: "1時間", 180: "3時間", 360: "6時間", 720: "12時間", 
+                           1440: "1日", 4320: "3日", 10080: "1週間", 43200: "1ヶ月"}
+            duration_text = duration_map.get(THREAD_MONITORING_DURATION, f"{THREAD_MONITORING_DURATION}分")
+            await ctx.send(f"✅ スレッド監視時間を更新しました: {duration_text}")
         else:
             await ctx.send(f"✅ 設定 `{setting_name}` を更新しました")
         
@@ -326,6 +450,54 @@ class ThreadBot(commands.Bot):
         
         await self.change_presence(activity=activity)
         
+        # デバッグモードの場合、定期的にスレッド監視状態をログに出力するタスクを開始
+        from config import DEBUG_MODE
+        if DEBUG_MODE:
+            self.debug_task = asyncio.create_task(self.debug_log_task())
+            logger.info("デバッグモード: スレッド監視状態のログ出力タスクを開始しました")
+    
+    async def debug_log_task(self):
+        """定期的にスレッド監視状態をログに出力するタスク"""
+        from bot.thread_handler import get_monitored_threads_status
+        
+        # 1時間ごとに出力
+        log_interval = 60 * 60  # 1時間
+        
+        try:
+            while True:
+                # スレッド情報を取得
+                threads_status = get_monitored_threads_status()
+                
+                if threads_status:
+                    # 情報をログに出力
+                    logger.debug(f"===== 監視中スレッド状態 ({len(threads_status)} 件) =====")
+                    for thread_id, info in threads_status.items():
+                        logger.debug(
+                            f"スレッド: '{info['name']}' (ID: {thread_id}), "
+                            f"作成者: {info['author']}, "
+                            f"作成日時: {info['created_at']}, "
+                            f"監視残り時間: {info['monitoring_remaining_minutes']}分, "
+                            f"アーカイブ時間: {info['auto_archive_duration']}分"
+                        )
+                    logger.debug("============================================")
+                
+                # 待機
+                await asyncio.sleep(log_interval)
+                
+        except asyncio.CancelledError:
+            logger.info("デバッグログタスクが中断されました")
+        except Exception as e:
+            logger.error(f"デバッグログタスクでエラーが発生しました: {e}")
+            
+    async def close(self):
+        """Botの終了処理"""
+        # デバッグタスクが存在すれば中断
+        if hasattr(self, 'debug_task') and self.debug_task and not self.debug_task.done():
+            self.debug_task.cancel()
+            
+        # 親クラスのclose処理を呼び出す
+        await super().close()
+        
     async def on_message(self, message: discord.Message):
         """メッセージ受信時のイベントハンドラ"""
         # 自分自身のメッセージは無視
@@ -333,11 +505,7 @@ class ThreadBot(commands.Bot):
             return
             
         # DMは無視
-        if not isinstance(message.channel, discord.TextChannel):
-            return
-            
-        # すでにスレッド内のメッセージは無視
-        if isinstance(message.channel, discord.Thread):
+        if not isinstance(message.channel, discord.TextChannel) and not isinstance(message.channel, discord.Thread):
             return
         
         # コマンド処理を試みる
@@ -346,5 +514,12 @@ class ThreadBot(commands.Bot):
             await self.invoke(ctx)
             return
         
-        # メッセージを処理
-        await self.process_message(message)
+        # スレッド内のメッセージか、通常チャンネルのメッセージかで処理を分ける
+        if isinstance(message.channel, discord.Thread):
+            # スレッド内のメッセージを処理
+            await self.process_thread_message(message)
+        else:
+            # 通常チャンネルのメッセージを処理
+            await self.process_message(message)
+
+

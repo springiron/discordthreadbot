@@ -69,9 +69,22 @@ def setup_logger(name: str) -> logging.Logger:
     
     # コンソールハンドラを追加
     console_handler = logging.StreamHandler(sys.stdout)
+
+    class SafeFormatter(logging.Formatter):
+        def format(self, record):
+            message = super().format(record)
+            # 特殊文字をエスケープまたは置換
+            try:
+                # 文字列のままでエンコードしてみる
+                message.encode(sys.stdout.encoding, errors='replace')
+                return message
+            except UnicodeEncodeError:
+                # エラーになる場合は置換
+                return message.encode(sys.stdout.encoding, errors='replace').decode(sys.stdout.encoding)
+
     # デバッグモードの場合、詳細なフォーマットを使用
     log_format = DETAILED_LOG_FORMAT if DEBUG_MODE else LOG_FORMAT
-    console_handler.setFormatter(logging.Formatter(log_format))
+    console_handler.setFormatter(SafeFormatter(log_format))
     logger.addHandler(console_handler)
     
     # ファイルハンドラを追加（ローテーション付き）
