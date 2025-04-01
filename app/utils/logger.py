@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 """
 ロギング設定と機能を提供するモジュール - 重複ハンドラ問題を修正
+Unicode絵文字処理問題を修正
 """
 
 import logging
 import os
 import sys
+import re
 from logging.handlers import RotatingFileHandler
 from typing import Optional, Dict
 
@@ -30,6 +32,75 @@ DETAILED_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(
 
 # 初期化済みロガーを追跡するグローバル辞書
 _initialized_loggers: Dict[str, logging.Logger] = {}
+
+# Unicode絵文字を処理するための正規表現パターン
+EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F600-\U0001F64F"  # 絵文字
+    "\U0001F300-\U0001F5FF"  # シンボル
+    "\U0001F680-\U0001F6FF"  # 交通機関や地図
+    "\U0001F700-\U0001F77F"  # 追加絵文字
+    "\U0001F780-\U0001F7FF"  # 追加絵文字
+    "\U0001F800-\U0001F8FF"  # 追加絵文字
+    "\U0001F900-\U0001F9FF"  # 追加絵文字
+    "\U0001FA00-\U0001FA6F"  # 追加絵文字
+    "\U0001FA70-\U0001FAFF"  # 追加絵文字
+    "\U00002702-\U000027B0"  # Dingbats
+    "\U000024C2-\U0001F251" 
+    "\u2600-\u26FF"          # ミスケラニアスシンボル - ⛔や✅を含む
+    "]+", 
+    flags=re.UNICODE
+)
+
+class SafeUnicodeStreamHandler(logging.StreamHandler):
+    """
+    Unicodeエンコーディングエラーを安全に処理するStreamHandler
+    """
+    def __init__(self, stream=None):
+        super().__init__(stream)
+        self.encoding = getattr(stream, 'encoding', sys.getdefaultencoding()) or 'utf-8'
+        
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            stream = self.stream
+            
+            # Windowsでcp932を使用している場合は特殊処理
+            if 'cp932' in self.encoding.lower():
+                # 絵文字と特殊文字を置換
+                msg = EMOJI_PATTERN.sub('□', msg)
+                
+                # さらに、エンコードできない可能性のある文字を安全に処理
+                try:
+                    # エンコードできるか試してみる
+                    msg.encode(self.encoding, errors='replace')
+                except UnicodeEncodeError:
+                    # 完全に失敗した場合は、バックアップとしてASCIIに変換
+                    msg = msg.encode(self.encoding, errors='replace').decode(self.encoding)
+            
+            # ストリームにメッセージを書き込む
+            stream.write(msg + self.terminator)
+            self.flush()
+        except RecursionError:
+            raise
+        except Exception:
+            self.handleError(record)
+
+class SafeFormatter(logging.Formatter):
+    """安全なフォーマッタ - Unicodeエラーを処理"""
+    def format(self, record):
+        try:
+            message = super().format(record)
+            return message
+        except UnicodeEncodeError:
+            # エンコードエラーが発生した場合は、文字を置換
+            try:
+                # エンコードエラーの場合、置換文字を使用
+                encoding = getattr(sys.stdout, 'encoding', sys.getdefaultencoding()) or 'utf-8'
+                return message.encode(encoding, errors='replace').decode(encoding)
+            except:
+                # 最終手段として、純粋なASCIIに変換
+                return repr(message)
 
 def setup_logger(name: str) -> logging.Logger:
     """
@@ -67,20 +138,8 @@ def setup_logger(name: str) -> logging.Logger:
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
     
-    # コンソールハンドラを追加
-    console_handler = logging.StreamHandler(sys.stdout)
-
-    class SafeFormatter(logging.Formatter):
-        def format(self, record):
-            message = super().format(record)
-            # 特殊文字をエスケープまたは置換
-            try:
-                # 文字列のままでエンコードしてみる
-                message.encode(sys.stdout.encoding, errors='replace')
-                return message
-            except UnicodeEncodeError:
-                # エラーになる場合は置換
-                return message.encode(sys.stdout.encoding, errors='replace').decode(sys.stdout.encoding)
+    # コンソールハンドラを追加（改良版）
+    console_handler = SafeUnicodeStreamHandler(sys.stdout)
 
     # デバッグモードの場合、詳細なフォーマットを使用
     log_format = DETAILED_LOG_FORMAT if DEBUG_MODE else LOG_FORMAT
@@ -96,7 +155,8 @@ def setup_logger(name: str) -> logging.Logger:
         file_handler = RotatingFileHandler(
             LOG_FILE,
             maxBytes=5 * 1024 * 1024,  # 5MB
-            backupCount=5
+            backupCount=5,
+            encoding='utf-8'  # 明示的にUTF-8を指定
         )
         file_handler.setFormatter(logging.Formatter(log_format))
         logger.addHandler(file_handler)
@@ -134,9 +194,9 @@ def setup_root_logger():
     
     # 既存のハンドラが無い場合のみ設定
     if not root_logger.handlers:
-        # 最小限の設定でルートロガーを構成
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        # 最小限の設定でルートロガーを構成 - 安全なハンドラを使用
+        handler = SafeUnicodeStreamHandler(sys.stdout)
+        handler.setFormatter(SafeFormatter(LOG_FORMAT))
         root_logger.addHandler(handler)
         root_logger.setLevel(logging.INFO)
 

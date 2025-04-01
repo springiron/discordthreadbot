@@ -190,11 +190,13 @@ async def close_thread(
         original_name = thread.name
         
         # 「[✅ 募集中]」タグが含まれている場合は除去
-        if "[✅ 募集中]" in original_name:
-            original_name = original_name.replace("[✅ 募集中]", "")
+        # 正規表現を使用して柔軟に対応
+        import re
+        recruitment_tag_pattern = re.compile(r'\[✅\s*募集中\]')
+        clean_name = recruitment_tag_pattern.sub('', original_name).strip()
         
         # 新しいスレッド名を生成
-        new_name = closed_name_template.format(original_name=original_name)
+        new_name = closed_name_template.format(original_name=clean_name)
         
         # もし新しい名前が長すぎる場合は切り詰める（Discordの制限は100文字）
         if len(new_name) > 100:
@@ -366,8 +368,10 @@ async def process_thread_message(
         
     thread = message.channel
     
-    # すでに締め切られているか確認
-    if closed_name_template.format(original_name="") in thread.name:
+    # 締め切りマーカーに基づいて、すでに締め切られているか確認
+    import re
+    close_marker = closed_name_template.format(original_name="").strip()
+    if close_marker and close_marker in thread.name:
         return
     
     # 締め切りキーワードが含まれているかチェック
@@ -461,8 +465,13 @@ class CloseThreadButton(Button):
             # 元のスレッド名を保存
             original_name = thread.name
             
+            # 「[✅ 募集中]」タグの除去（正規表現を使用）
+            import re
+            recruitment_tag_pattern = re.compile(r'\[✅\s*募集中\]')
+            clean_name = recruitment_tag_pattern.sub('', original_name).strip()
+            
             # 新しいスレッド名を生成
-            new_name = self.closed_name_template.format(original_name=original_name)
+            new_name = self.closed_name_template.format(original_name=clean_name)
             
             # スレッド名を変更
             await thread.edit(name=new_name)
@@ -524,6 +533,7 @@ class CloseThreadButton(Button):
             # エラー応答
             await interaction.response.send_message(f"❌ エラーが発生しました: {e}", ephemeral=True)
             logger.error(f"ボタンによるスレッド名変更エラー (ID: {thread.id}): {e}")
+
 
 class CloseThreadView(View):
     """スレッド締め切りボタンを含むビュー"""
