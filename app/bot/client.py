@@ -78,6 +78,7 @@ class ThreadBot(commands.Bot):
             
         # スレッド作成条件をチェック
         if should_create_thread(message, TRIGGER_KEYWORDS):
+            logger.info(f"スレッド作成: メッセージ={message.clean_content}")
             logger.info(f"スレッド作成: メッセージID={message.id}")
             try:
                 # スレッド名を生成
@@ -118,6 +119,7 @@ class ThreadBot(commands.Bot):
             return
             
         # スレッド内のメッセージを処理
+        # thread_handler.pyの更新された関数を呼び出す - 作成者チェックが追加されている
         await process_thread_message(
             message=message,
             close_keywords=THREAD_CLOSE_KEYWORDS,
@@ -537,6 +539,14 @@ class ThreadBot(commands.Bot):
         # デバッグタスクが存在すれば中断
         if hasattr(self, 'debug_task') and self.debug_task and not self.debug_task.done():
             self.debug_task.cancel()
+        
+        # スレッド関連データのクリーンアップを実行
+        from bot.thread_handler import cleanup_thread_data
+        try:
+            await cleanup_thread_data()
+            logger.info("スレッド関連データをクリーンアップしました")
+        except Exception as e:
+            logger.error(f"スレッドデータのクリーンアップ中にエラーが発生しました: {e}")
             
         # 親クラスのclose処理を呼び出す
         await super().close()

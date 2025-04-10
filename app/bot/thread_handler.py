@@ -21,6 +21,9 @@ logger = setup_logger(__name__)
 # キー：スレッドID、値：監視タスク
 monitored_threads: Dict[int, asyncio.Task] = {}
 
+# スレッド作成者を追跡するディクショナリ
+thread_creators = {}  # キー: スレッドID、値: 作成者のユーザーID
+
 # デバッグ情報を保持する辞書
 # キー：スレッドID、値：{'created_at': タイムスタンプ, 'end_time': 監視終了タイムスタンプ}
 thread_debug_info: Dict[int, Dict] = {}
@@ -42,14 +45,14 @@ def should_create_thread(message: discord.Message, trigger_keywords: List[str]) 
     
     # @[数値]パターンのチェック（例: @1, @123, ＠１, ＠１２３など、半角・全角両対応）
     at_number_pattern = re.compile(r'[@＠][0-9０-９]+')
-    if at_number_pattern.search(message.content):
+    if at_number_pattern.search(message.clean_content):
         return True
     
     # メッセージ内容にトリガーキーワードが含まれるかチェック
     for keyword in trigger_keywords:
         # 大文字小文字を区別せずにキーワードを検索
         pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-        if pattern.search(message.content):
+        if pattern.search(message.clean_content):
             return True
     
     return False
@@ -111,10 +114,14 @@ async def create_thread_from_message(
         
         logger.info(f"スレッド '{name}' を作成しました (ID: {thread.id})")
         
+        # スレッド作成者情報を保存
+        thread_creators[thread.id] = message.author.id
+        logger.info(f"スレッド作成者情報を保存しました: スレッドID={thread.id}, 作成者ID={message.author.id}")
+        
         # 締め切りボタンを含むメッセージを送信
         try:
-            # ボタンビューを作成
-            view = CloseThreadView(thread.id, closed_name_template)
+            # ボタンビューを作成 - 作成者IDも渡す
+            view = CloseThreadView(thread.id, closed_name_template, message.author.id)
             
             # メッセージを送信
             await thread.send(
@@ -135,11 +142,13 @@ async def create_thread_from_message(
                 'auto_archive_duration': auto_archive_duration,
                 'name': name,
                 'author': message.author.display_name,
+                'author_id': message.author.id,  # 作成者IDも保存
                 'monitoring_duration': monitoring_duration
             }
             
             # デバッグ情報をログに出力
             logger.debug(f"スレッド作成デバッグ情報: ID={thread.id}, 作成者={message.author.display_name}, "
+                        f"作成者ID={message.author.id}, "
                         f"アーカイブ時間={auto_archive_duration}分, 監視時間={monitoring_duration}分")
         
         # スレッド監視タスクを開始
@@ -206,6 +215,11 @@ async def close_thread(
         # スレッド名を変更
         await thread.edit(name=new_name)
         
+        # スレッド作成者情報を削除（スレッドが閉じられたため）
+        if thread.id in thread_creators:
+            del thread_creators[thread.id]
+            logger.info(f"スレッド '{original_name}' (ID: {thread.id}) の作成者情報を削除しました")
+        
         logger.info(f"スレッド名を変更しました: '{original_name}' → '{new_name}' (ID: {thread.id})")
         return True
         
@@ -219,6 +233,7 @@ async def close_thread(
         logger.error(f"スレッド名変更中にエラーが発生しました: {e}")
     
     return False
+
 
 async def monitor_thread(
     bot: discord.Client,
@@ -376,6 +391,15 @@ async def process_thread_message(
     
     # 締め切りキーワードが含まれているかチェック
     if should_close_thread(message, close_keywords):
+        # スレッド作成者IDを取得
+        creator_id = thread_creators.get(thread.id)
+        
+        # 作成者のみが締め切れるようにする
+        if creator_id and creator_id != message.author.id:
+            logger.info(f"スレッド '{thread.name}' (ID: {thread.id}) で締め切りキーワードを検出しましたが、"
+                      f"作成者(ID:{creator_id})以外のユーザー(ID:{message.author.id})からのため無視します")
+            return
+
         logger.info(f"スレッド '{thread.name}' (ID: {thread.id}) で締め切りキーワードを検出しました")
         
         # スレッドを締め切る
@@ -428,13 +452,14 @@ def get_monitored_threads_status():
 class CloseThreadButton(Button):
     """スレッド締め切りボタン"""
     
-    def __init__(self, thread_id: int, closed_name_template: str):
+    def __init__(self, thread_id: int, closed_name_template: str, creator_id: int = None):
         """
         ボタンの初期化
         
         Args:
             thread_id: 対象スレッドのID
             closed_name_template: 締め切り後のスレッド名テンプレート
+            creator_id: スレッド作成者のユーザーID
         """
         super().__init__(
             style=discord.ButtonStyle.danger,  # 赤色のボタン
@@ -445,6 +470,7 @@ class CloseThreadButton(Button):
         )
         self.thread_id = thread_id
         self.closed_name_template = closed_name_template
+        self.creator_id = creator_id  # 作成者IDを保存
         
     async def callback(self, interaction: discord.Interaction):
         """ボタンクリック時のコールバック"""
@@ -458,6 +484,19 @@ class CloseThreadButton(Button):
         # すでに締め切られているか確認
         if self.closed_name_template.format(original_name="") in thread.name:
             await interaction.response.send_message("⚠️ このスレッドはすでに締め切られています", ephemeral=True)
+            return
+            
+        # 作成者IDを取得（ボタンに保存されていない場合はグローバル辞書から取得）
+        creator_id = self.creator_id if self.creator_id else thread_creators.get(thread.id)
+        
+        # 作成者以外のユーザーからのリクエストを拒否
+        if creator_id and interaction.user.id != creator_id:
+            await interaction.response.send_message(
+                "⚠️ スレッドを締め切れるのはスレッドの作成者のみです", 
+                ephemeral=True
+            )
+            logger.info(f"作成者(ID:{creator_id})以外のユーザー(ID:{interaction.user.id})による"
+                      f"スレッド '{thread.name}' (ID: {thread.id}) の締め切り操作を拒否しました")
             return
             
         # スレッドを締め切る
@@ -538,15 +577,33 @@ class CloseThreadButton(Button):
 class CloseThreadView(View):
     """スレッド締め切りボタンを含むビュー"""
     
-    def __init__(self, thread_id: int, closed_name_template: str):
+    def __init__(self, thread_id: int, closed_name_template: str, creator_id: int = None):
         """
         ビューの初期化
         
         Args:
             thread_id: 対象スレッドのID
             closed_name_template: 締め切り後のスレッド名テンプレート
+            creator_id: スレッド作成者のユーザーID
         """
         super().__init__(timeout=None)  # タイムアウトなし（ボタンは永続的）
         
-        # ボタンを追加
-        self.add_item(CloseThreadButton(thread_id, closed_name_template))
+        # ボタンを追加 - 作成者IDも渡す
+        self.add_item(CloseThreadButton(thread_id, closed_name_template, creator_id))
+
+
+async def cleanup_thread_data():
+    """スレッド関連のデータをクリーンアップ"""
+    global thread_creators, monitored_threads, thread_debug_info
+    
+    try:
+        # スレッド作成者情報をクリア
+        thread_creators.clear()
+        
+        # 他のデータもクリア
+        monitored_threads.clear()
+        thread_debug_info.clear()
+        
+        logger.info("スレッドデータがクリーンアップされました")
+    except Exception as e:
+        logger.error(f"スレッドデータのクリーンアップ中にエラーが発生しました: {e}")
