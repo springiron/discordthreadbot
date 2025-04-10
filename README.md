@@ -96,18 +96,55 @@ Botは以下のコマンドに対応しています：
 
 ## 設定ファイル
 
-`.env`ファイルで以下の設定が可能です：
+Botの設定は以下の2つのファイルで管理されています：
 
+### .env ファイル
+
+- **用途**: 初期設定および機密情報（トークンなど）を管理するためのファイル
+- **特徴**: 
+  - バージョン管理から除外されることが多い（.gitignoreに追加）
+  - Bot 起動時に一度だけ読み込まれる
+  - サーバー環境ごとに異なる設定が必要な場合に使用
+
+設定例：
 ```
+# 必須設定
 DISCORD_BOT_TOKEN=あなたのBotトークン
+
+# 基本設定
 DEBUG_MODE=false
 LOG_LEVEL=INFO
+
+# スレッド設定
 THREAD_AUTO_ARCHIVE_DURATION=60
 THREAD_NAME_TEMPLATE=[✅ 募集中]{username}の募集
 TRIGGER_KEYWORDS=募集
+THREAD_CLOSE_KEYWORDS=〆,締め,しめ,〆切,締切,しめきり,closed,close
+THREAD_CLOSED_NAME_TEMPLATE=[⛔ 募集終了]{original_name}
+THREAD_MONITORING_DURATION=60
+
+# チャンネル・ユーザー設定
 ENABLED_CHANNEL_IDS=
 ADMIN_USER_IDS=
+IGNORED_BOT_IDS=
 ```
+
+### config.json ファイル
+
+- **用途**: Bot実行中に変更可能な設定を保存・管理するためのファイル
+- **特徴**:
+  - Discordコマンド（`!config`）で変更した設定が保存される
+  - `.env`から読み込まれた設定はBot起動時に`config.json`に反映される
+  - 機密情報（BOT_TOKEN）は保存されない
+
+**重要**: `config.json`には機密情報（Botトークンなど）を保存しないでください。機密情報は`.env`ファイルのみで管理してください。
+
+### 設定の優先順位
+
+1. Bot起動時は`.env`ファイルから設定が読み込まれる
+2. `.env`ファイルの設定は`config.json`に反映される（BOT_TOKENを除く）
+3. `!config`コマンドで変更した設定は`config.json`に保存される
+4. Bot再起動時には`config.json`の設定が優先されるが、`.env`に明示的に指定された値があればそちらが優先される
 
 ## Dockerでの実行
 
@@ -116,6 +153,12 @@ Dockerを使用して実行する場合：
 ```
 docker build -t discord-thread-bot .
 docker run -d --name discord-bot --env-file .env discord-thread-bot
+```
+
+Docker Composeを使用する場合：
+
+```
+docker-compose up -d
 ```
 
 ## 注意事項
@@ -133,6 +176,10 @@ docker run -d --name discord-bot --env-file .env discord-thread-bot
 - 締め切りボタンが動作しない
   - スレッドを作成したユーザーでのみ操作可能です
   - Bot再起動後は、再起動前に作成されたスレッドの作成者情報が失われる可能性があります
+
+- ユーザーメンション（@ユーザー名）でスレッドが作成されてしまう
+  - Discordでは、ユーザーメンションは内部的に`<@数字>`や`<@!数字>`の形式で送信されるため、これが`@数字`パターンとして検出される場合があります
+  - 解決策として、`!config TRIGGER_KEYWORDS`で具体的なキーワードのみを使用するように設定してください
 
 ## ライセンス
 
