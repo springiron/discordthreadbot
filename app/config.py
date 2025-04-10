@@ -214,6 +214,10 @@ def save_config():
         save_dict = {}
         
         for key, value in config_values.items():
+            # BOT_TOKENは保存しない
+            if key == "DISCORD_BOT_TOKEN":
+                continue
+                
             # setはJSONに直接保存できないためリストに変換
             if isinstance(value, set):
                 save_dict[key] = list(value)

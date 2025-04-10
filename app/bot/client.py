@@ -72,7 +72,7 @@ class ThreadBot(commands.Bot):
             return
         
         # 無視するBotからのメッセージをスキップ
-        if message.author.bot and message.author.id in IGNORED_BOT_IDS:
+        if message.author.bot and str(message.author.id) in map(str, IGNORED_BOT_IDS):
             logger.debug(f"無視リストに含まれるBot (ID: {message.author.id}) からのメッセージをスキップします")
             return
             
