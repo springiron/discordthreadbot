@@ -1,91 +1,144 @@
-# Discord 自動スレッド作成Bot
+# Discord スレッド自動生成 Bot
 
-特定のキーワードを含むメッセージが送信された際に、自動でスレッドを作成するDiscord Botです。
+Discord上のメッセージから自動的にスレッドを作成し、募集完了時に閉じることができるBotです。
 
-## 主な機能
+## 機能概要
 
-- 特定のキーワード（例: 「募集」）を含むメッセージが送信された時に自動でスレッドを作成
-- スレッドタイトルにはメッセージ投稿者の表示名を設定
-- スレッド作成後、Botは自動的にスレッドから退出
-- スレッドは1週間（10080分）で自動的にアーカイブ
+- 特定のキーワードや`@数字`を含むメッセージに対して自動的にスレッドを作成
+- スレッドを作成したユーザーのみが締め切りボタンを押せる権限管理
+- キーワードによるスレッド締め切り機能（作成者のみ）
+- 閉じたスレッドは名前が変更され、親メッセージにリアクションが追加される
+- チャンネル単位での有効・無効設定
+- 自動アーカイブ時間やスレッド名など、多彩な設定をDiscord上のコマンドで変更可能
 
-## セットアップ方法
+## 使い方
 
-### 必要条件
+### スレッド自動作成
 
-- Docker
-- Discord Bot Token
+以下のいずれかの条件を満たすメッセージを投稿すると、自動的にスレッドが作成されます：
 
-### 環境変数の設定
+1. 設定されたキーワード（デフォルトは「募集」）を含むメッセージ
+2. `@数字`パターン（例：`@3`、`@10`）を含むメッセージ
 
-以下の環境変数を設定してください：
+### スレッド締め切り方法
 
-- `DISCORD_BOT_TOKEN`: Discord Bot Token
-- `DEBUG_MODE`: デバッグモード (`true` または `false`)
-- `ENABLED_CHANNEL_IDS`: 有効なチャンネルIDのリスト (カンマ区切り、例: `123456789,987654321`)
-- `KEEP_ALIVE_ENABLED`: キープアライブ機能の有効/無効 (`true` または `false`)
-- `KEEP_ALIVE_INTERVAL`: キープアライブの間隔（分）
+スレッドを締め切るには、以下のいずれかの方法があります：
 
-### ローカルでの実行方法
+1. スレッド内の「募集を締め切る」ボタンを押す
+2. スレッド内で締め切りキーワード（「〆」「締め切り」など）を投稿する
 
-1. 環境変数を設定
-```bash
-export DISCORD_BOT_TOKEN=your_token_here
-export DEBUG_MODE=false
+**※スレッドを締め切ることができるのは、スレッドの作成者のみです。**
+
+## コマンド一覧
+
+Botは以下のコマンドに対応しています：
+
+- `!config` - Bot設定を表示・変更（管理者用）
+- `!keywords` - トリガーキーワード一覧を表示
+- `!channels` - Bot有効チャンネル一覧を表示
+- `!closekeywords` - 締め切りキーワード一覧を表示
+- `!ignoredbots` - 無視するBotの一覧を表示
+- `!debug` - 監視中スレッドの詳細情報を表示（管理者用、デバッグモード時のみ）
+- `!bothelp` - コマンドのヘルプを表示
+
+### 設定変更例
+
+```
+!config TRIGGER_KEYWORDS 募集,参加者募集
+!config THREAD_AUTO_ARCHIVE_DURATION 1440
+!config ENABLED_CHANNEL_IDS 123456789012345678,987654321098765432
 ```
 
-2. Docker Composeでビルド・起動
-```bash
-docker-compose up --build
+## 主な設定項目
+
+| 設定名 | 説明 | デフォルト値 |
+|--------|------|-------------|
+| TRIGGER_KEYWORDS | スレッド作成のトリガーとなるキーワード | ["募集"] |
+| ENABLED_CHANNEL_IDS | Botが有効なチャンネルID（空の場合は全チャンネルで有効） | [] |
+| THREAD_AUTO_ARCHIVE_DURATION | スレッド自動アーカイブ時間（分） | 60 |
+| THREAD_NAME_TEMPLATE | スレッド名のテンプレート | "[✅ 募集中]{username}の募集" |
+| THREAD_CLOSE_KEYWORDS | スレッド締め切りのトリガーとなるキーワード | ["〆", "締め", "しめ", "〆切", "締切", "しめきり", "closed", "close"] |
+| THREAD_CLOSED_NAME_TEMPLATE | スレッド締め切り後の名前テンプレート | "[⛔ 募集終了]{original_name}" |
+| THREAD_MONITORING_DURATION | スレッド監視時間（分） | 60 |
+| IGNORED_BOT_IDS | 無視するBotのID | [] |
+
+## インストール方法
+
+### 必要環境
+
+- Python 3.8以上
+- discord.py 2.0以上
+
+### インストール手順
+
+1. リポジトリをクローン
+   ```
+   git clone https://github.com/yourusername/discord-thread-bot.git
+   cd discord-thread-bot
+   ```
+
+2. 依存パッケージをインストール
+   ```
+   pip install -r requirements.txt
+   ```
+
+3. 設定ファイルの準備
+   ```
+   cp .env.example .env
+   ```
+
+4. `.env`ファイルを編集し、Discord Botトークンとその他の設定を入力
+
+5. Botを起動
+   ```
+   python app/main.py
+   ```
+
+## 設定ファイル
+
+`.env`ファイルで以下の設定が可能です：
+
+```
+DISCORD_BOT_TOKEN=あなたのBotトークン
+DEBUG_MODE=false
+LOG_LEVEL=INFO
+THREAD_AUTO_ARCHIVE_DURATION=60
+THREAD_NAME_TEMPLATE=[✅ 募集中]{username}の募集
+TRIGGER_KEYWORDS=募集
+ENABLED_CHANNEL_IDS=
+ADMIN_USER_IDS=
 ```
 
-## Koyebでのデプロイ方法
+## Dockerでの実行
 
-1. Koyebアカウントを作成
+Dockerを使用して実行する場合：
 
-2. Koyebダッシュボードから新しいアプリを作成
-   - デプロイタイプとして「Docker」を選択
+```
+docker build -t discord-thread-bot .
+docker run -d --name discord-bot --env-file .env discord-thread-bot
+```
 
-3. GitHubリポジトリと連携
-   - メインブランチを連携
-   - 自動デプロイを有効化
+## 注意事項
 
-4. 環境変数を設定
-   - `DISCORD_BOT_TOKEN`: Discord Bot Token
+- スレッド締め切り機能は、スレッドを作成したユーザーのみが実行できます
+- Botが再起動した場合、スレッド作成者情報はリセットされるため、再起動前に作成されたスレッドの締め切りはできなくなる可能性があります
+- 大量のメッセージが投稿されるチャンネルでは、トリガーキーワードをより具体的なものに設定することをお勧めします
 
-5. デプロイを実行
+## トラブルシューティング
 
-## カスタマイズ
+- スレッドが自動作成されない
+  - トリガーキーワードや有効チャンネル設定を確認してください
+  - Botに必要な権限（スレッドの作成・読み取り権限）があるか確認してください
 
-`app/config.py` ファイルを編集することで、以下の設定をカスタマイズできます：
-
-- `TRIGGER_KEYWORDS`: スレッド作成のトリガーとなるキーワード
-- `THREAD_AUTO_ARCHIVE_DURATION`: スレッドの自動アーカイブ時間
-- `THREAD_NAME_TEMPLATE`: スレッド名のテンプレート
-- `ENABLED_CHANNEL_IDS`: 有効なチャンネルIDのリスト
-- `KEEP_ALIVE_ENABLED`: キープアライブ機能の有効/無効
-- `KEEP_ALIVE_INTERVAL`: キープアライブの間隔（分）
-
-### チャンネルIDの設定
-
-特定のチャンネルでのみBotを動作させるには：
-
-1. Discordの設定で「開発者モード」を有効にします
-2. 対象チャンネルを右クリックして「IDをコピー」を選択
-3. 環境変数 `ENABLED_CHANNEL_IDS` に取得したIDをカンマ区切りで設定します
-   ```
-   ENABLED_CHANNEL_IDS=123456789012345678,987654321098765432
-   ```
-4. 環境変数を設定しない、または空の値を設定すると、Botはすべてのチャンネルで動作します
-
-### キープアライブ機能
-
-Koyebなどのサーバーで一定時間アクティビティがないとスリープする問題に対処するため、キープアライブ機能を実装しています：
-
-1. `KEEP_ALIVE_ENABLED=true` に設定することで機能を有効化（デフォルトは有効）
-2. `KEEP_ALIVE_INTERVAL` で間隔を分単位で指定（デフォルトは30分）
-3. キープアライブ機能は定期的にログメッセージを出力して、サーバーをアクティブな状態に保ちます
+- 締め切りボタンが動作しない
+  - スレッドを作成したユーザーでのみ操作可能です
+  - Bot再起動後は、再起動前に作成されたスレッドの作成者情報が失われる可能性があります
 
 ## ライセンス
 
-このプロジェクトはMITライセンスの下で公開されています。
+MITライセンス
+
+## 貢献
+
+バグ報告や機能リクエストは、GitHubのIssuesにて受け付けています。
+プルリクエストも歓迎します！
