@@ -13,7 +13,7 @@ import re
 from config import (
     BOT_CONFIG, TRIGGER_KEYWORDS, THREAD_AUTO_ARCHIVE_DURATION, 
     THREAD_NAME_TEMPLATE, ENABLED_CHANNEL_IDS, ADMIN_USER_IDS, 
-    THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION,
+    THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION,IGNORED_BOT_IDS,
     update_setting, get_editable_settings
 )
 from bot.thread_handler import (
@@ -69,6 +69,11 @@ class ThreadBot(commands.Bot):
         
         # 指定されたチャンネルIDのリストがある場合、そのチャンネルでのみ動作
         if ENABLED_CHANNEL_IDS and channel_id not in ENABLED_CHANNEL_IDS:
+            return
+        
+        # 無視するBotからのメッセージをスキップ
+        if message.author.bot and message.author.id in IGNORED_BOT_IDS:
+            logger.debug(f"無視リストに含まれるBot (ID: {message.author.id}) からのメッセージをスキップします")
             return
             
         # スレッド作成条件をチェック
@@ -321,7 +326,42 @@ class ThreadBot(commands.Bot):
             if isinstance(value, (list, set)):
                 return ", ".join(str(item) for item in value) if value else "（なし）"
             return str(value) if value is not None else "（なし）"
-               
+
+        @self.command(name="ignoredbots", help="無視するBotの一覧を表示します")
+        async def ignoredbots_command(ctx):
+            """無視するBotの一覧を表示するコマンド"""
+            if not IGNORED_BOT_IDS:
+                desc = "無視するBotは設定されていません"
+            else:
+                bots = []
+                for bot_id in IGNORED_BOT_IDS:
+                    bot_user = self.get_user(bot_id)
+                    bot_name = f"{bot_user.name}" if bot_user else f"ID:{bot_id}"
+                    bots.append(bot_name)
+                desc = "無視するBot: " + ", ".join(bots)
+            
+            embed = discord.Embed(title="無視するBotリスト", description=desc, color=discord.Color.green())
+            
+            if self.is_admin(ctx.author):
+                embed.add_field(
+                    name="変更方法",
+                    value="`!config IGNORED_BOT_IDS BotID1,BotID2`\n例: `!config IGNORED_BOT_IDS 123456789012345678`",
+                    inline=False
+                )
+                
+                # Bot IDの取得方法を説明
+                embed.add_field(
+                    name="Bot IDの調べ方",
+                    value="1. 開発者モードを有効にする（ユーザー設定→詳細設定）\n"
+                        "2. 対象のBotを右クリックして「IDをコピー」を選択",
+                    inline=False
+                )
+            
+            await ctx.send(embed=embed)
+
+
+
+
     async def show_config_list(self, ctx):
         """編集可能な設定一覧を表示"""
         editable_settings = get_editable_settings()
@@ -338,9 +378,12 @@ class ThreadBot(commands.Bot):
             if len(value_str) > 100:
                 value_str = value_str[:97] + "..."
             
+            # description キーの存在を確認してから使用
+            description = info.get('description', '説明なし')
+            
             embed.add_field(
                 name=name,
-                value=f"{info['description']}\n**現在の値:** {value_str}",
+                value=f"{description}\n**現在の値:** {value_str}",
                 inline=False
             )
         

@@ -37,10 +37,12 @@ DEFAULT_CONFIG = {
         "messages": True,
         "guild_messages": True,
     },
+    "IGNORED_BOT_IDS": set(),  # 無視するBotのIDリスト
     # 以下の設定を追加
     "THREAD_CLOSE_KEYWORDS": ["〆", "締め", "しめ", "〆切", "締切", "しめきり", "closed", "close"],
     "THREAD_CLOSED_NAME_TEMPLATE": "[⛔ 募集終了]{original_name}",
-    "THREAD_MONITORING_DURATION": 60,  # 1時間（分）
+    "THREAD_MONITORING_DURATION": 60  # 1時間（分）
+
 }
 
 # 編集可能な設定と説明
@@ -100,6 +102,12 @@ EDITABLE_SETTINGS = {
         "messages": True,
         "guild_messages": True,
         "guild_reactions": True,  # リアクション権限を追加（ボタン操作に必要）
+    },
+    "IGNORED_BOT_IDS": {
+        "description": "無視するBotのID（カンマ区切り）",
+        "type": "set",
+        "options": [],
+        "help_text": "スレッド作成をスキップするBotのIDを設定します。複数指定する場合はカンマ区切りで入力してください。"
     }
 }
 
@@ -149,7 +157,8 @@ def load_config():
         "THREAD_NAME_TEMPLATE": os.environ.get("THREAD_NAME_TEMPLATE"),
         "TRIGGER_KEYWORDS": os.environ.get("TRIGGER_KEYWORDS"),
         "ENABLED_CHANNEL_IDS": os.environ.get("ENABLED_CHANNEL_IDS"),
-        "ADMIN_USER_IDS": os.environ.get("ADMIN_USER_IDS")
+        "ADMIN_USER_IDS": os.environ.get("ADMIN_USER_IDS"),
+        "IGNORED_BOT_IDS": os.environ.get("IGNORED_BOT_IDS")
     }
     
     # 環境変数の値が存在する場合のみ上書き
@@ -314,7 +323,7 @@ BOT_INTENTS = config_values["BOT_INTENTS"]
 THREAD_CLOSE_KEYWORDS = config_values["THREAD_CLOSE_KEYWORDS"]
 THREAD_CLOSED_NAME_TEMPLATE = config_values["THREAD_CLOSED_NAME_TEMPLATE"]
 THREAD_MONITORING_DURATION = config_values["THREAD_MONITORING_DURATION"]
-
+IGNORED_BOT_IDS = config_values["IGNORED_BOT_IDS"]
 
 # Bot設定の辞書形式
 BOT_CONFIG = {
@@ -325,7 +334,7 @@ BOT_CONFIG = {
 def _update_global_settings(setting_name, new_value):
     """グローバル設定を更新"""
     global TRIGGER_KEYWORDS, ENABLED_CHANNEL_IDS, THREAD_AUTO_ARCHIVE_DURATION, THREAD_NAME_TEMPLATE, ADMIN_USER_IDS
-    global THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION  # 追加
+    global THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION,IGNORED_BOT_IDS  # 追加
     
     # 設定値は config.py の update_setting() で既に適切な型に変換されているため
     # ここでは単にグローバル変数に代入するだけでOK
@@ -346,3 +355,5 @@ def _update_global_settings(setting_name, new_value):
         THREAD_CLOSED_NAME_TEMPLATE = new_value
     elif setting_name == "THREAD_MONITORING_DURATION":
         THREAD_MONITORING_DURATION = new_value
+    elif setting_name == "IGNORED_BOT_IDS":
+        IGNORED_BOT_IDS = new_value
