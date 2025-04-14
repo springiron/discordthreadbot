@@ -41,7 +41,14 @@ DEFAULT_CONFIG = {
     # 以下の設定を追加
     "THREAD_CLOSE_KEYWORDS": ["〆", "締め", "しめ", "〆切", "締切", "しめきり", "closed", "close"],
     "THREAD_CLOSED_NAME_TEMPLATE": "[⛔ 募集終了]{original_name}",
-    "THREAD_MONITORING_DURATION": 60  # 1時間（分）
+    "THREAD_MONITORING_DURATION": 60,  # 1時間（分）
+    # スプレッドシートログ設定
+    "SPREADSHEET_LOGGING_ENABLED": False,
+    "SPREADSHEET_CREDENTIALS_FILE": os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "credentials.json"),
+    "SPREADSHEET_ID": "",
+    "SPREADSHEET_SHEET_NAME": "スレッドログ",
+    "SPREADSHEET_FIXED_VALUE": "未定",
+    "SPREADSHEET_LOG_QUEUE_SIZE": 100  # 最大キューサイズ
 
 }
 
@@ -108,6 +115,36 @@ EDITABLE_SETTINGS = {
         "type": "set",
         "options": [],
         "help_text": "スレッド作成をスキップするBotのIDを設定します。複数指定する場合はカンマ区切りで入力してください。"
+    },
+    "SPREADSHEET_LOGGING_ENABLED": {
+        "description": "スプレッドシートへのログ記録機能の有効/無効",
+        "type": "bool",
+        "options": [True, False],
+        "help_text": "スレッド作成時にスプレッドシートにログを記録するかどうかを設定します。"
+    },
+    "SPREADSHEET_CREDENTIALS_FILE": {
+        "description": "Google API認証情報ファイルのパス",
+        "type": "str",
+        "options": [],
+        "help_text": "Google API認証情報（サービスアカウントキー）のJSONファイルパスを設定します。"
+    },
+    "SPREADSHEET_ID": {
+        "description": "Google SpreadsheetのID",
+        "type": "str",
+        "options": [],
+        "help_text": "スレッドログを記録するGoogle SpreadsheetのIDを設定します。"
+    },
+    "SPREADSHEET_SHEET_NAME": {
+        "description": "スプレッドシート内のシート名",
+        "type": "str",
+        "options": [],
+        "help_text": "ログを記録するシート名を設定します。存在しない場合は自動的に作成されます。"
+    },
+    "SPREADSHEET_FIXED_VALUE": {
+        "description": "ログに記録する固定値",
+        "type": "str",
+        "options": [],
+        "help_text": "スレッドログに記録する固定値を設定します。"
     }
 }
 
@@ -158,7 +195,12 @@ def load_config():
         "TRIGGER_KEYWORDS": os.environ.get("TRIGGER_KEYWORDS"),
         "ENABLED_CHANNEL_IDS": os.environ.get("ENABLED_CHANNEL_IDS"),
         "ADMIN_USER_IDS": os.environ.get("ADMIN_USER_IDS"),
-        "IGNORED_BOT_IDS": os.environ.get("IGNORED_BOT_IDS")
+        "IGNORED_BOT_IDS": os.environ.get("IGNORED_BOT_IDS"),
+        "SPREADSHEET_LOGGING_ENABLED": os.environ.get("SPREADSHEET_LOGGING_ENABLED", "").lower() == "true",
+        "SPREADSHEET_CREDENTIALS_FILE": os.environ.get("SPREADSHEET_CREDENTIALS_FILE"),
+        "SPREADSHEET_ID": os.environ.get("SPREADSHEET_ID"),
+        "SPREADSHEET_SHEET_NAME": os.environ.get("SPREADSHEET_SHEET_NAME"),
+        "SPREADSHEET_FIXED_VALUE": os.environ.get("SPREADSHEET_FIXED_VALUE")
     }
     
     # 環境変数の値が存在する場合のみ上書き
@@ -328,6 +370,12 @@ THREAD_CLOSE_KEYWORDS = config_values["THREAD_CLOSE_KEYWORDS"]
 THREAD_CLOSED_NAME_TEMPLATE = config_values["THREAD_CLOSED_NAME_TEMPLATE"]
 THREAD_MONITORING_DURATION = config_values["THREAD_MONITORING_DURATION"]
 IGNORED_BOT_IDS = config_values["IGNORED_BOT_IDS"]
+SPREADSHEET_LOGGING_ENABLED = config_values["SPREADSHEET_LOGGING_ENABLED"]
+SPREADSHEET_CREDENTIALS_FILE = config_values["SPREADSHEET_CREDENTIALS_FILE"]
+SPREADSHEET_ID = config_values["SPREADSHEET_ID"]
+SPREADSHEET_SHEET_NAME = config_values["SPREADSHEET_SHEET_NAME"]
+SPREADSHEET_FIXED_VALUE = config_values["SPREADSHEET_FIXED_VALUE"]
+SPREADSHEET_LOG_QUEUE_SIZE = config_values["SPREADSHEET_LOG_QUEUE_SIZE"]
 
 # Bot設定の辞書形式
 BOT_CONFIG = {
@@ -338,7 +386,9 @@ BOT_CONFIG = {
 def _update_global_settings(setting_name, new_value):
     """グローバル設定を更新"""
     global TRIGGER_KEYWORDS, ENABLED_CHANNEL_IDS, THREAD_AUTO_ARCHIVE_DURATION, THREAD_NAME_TEMPLATE, ADMIN_USER_IDS
-    global THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION,IGNORED_BOT_IDS  # 追加
+    global THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION, IGNORED_BOT_IDS
+    global SPREADSHEET_LOGGING_ENABLED, SPREADSHEET_CREDENTIALS_FILE, SPREADSHEET_ID
+    global SPREADSHEET_SHEET_NAME, SPREADSHEET_FIXED_VALUE, SPREADSHEET_LOG_QUEUE_SIZE
     
     # 設定値は config.py の update_setting() で既に適切な型に変換されているため
     # ここでは単にグローバル変数に代入するだけでOK
@@ -361,3 +411,16 @@ def _update_global_settings(setting_name, new_value):
         THREAD_MONITORING_DURATION = new_value
     elif setting_name == "IGNORED_BOT_IDS":
         IGNORED_BOT_IDS = new_value
+    # スプレッドシート関連の設定を追加
+    elif setting_name == "SPREADSHEET_LOGGING_ENABLED":
+        SPREADSHEET_LOGGING_ENABLED = new_value
+    elif setting_name == "SPREADSHEET_CREDENTIALS_FILE":
+        SPREADSHEET_CREDENTIALS_FILE = new_value
+    elif setting_name == "SPREADSHEET_ID":
+        SPREADSHEET_ID = new_value
+    elif setting_name == "SPREADSHEET_SHEET_NAME":
+        SPREADSHEET_SHEET_NAME = new_value
+    elif setting_name == "SPREADSHEET_FIXED_VALUE":
+        SPREADSHEET_FIXED_VALUE = new_value
+    elif setting_name == "SPREADSHEET_LOG_QUEUE_SIZE":
+        SPREADSHEET_LOG_QUEUE_SIZE = new_value

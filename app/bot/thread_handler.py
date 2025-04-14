@@ -15,6 +15,19 @@ from datetime import datetime, timedelta
 from utils.logger import setup_logger
 from config import DEBUG_MODE
 
+# スプレッドシートロガーをインポート（遅延インポート）
+def get_spreadsheet_logger():
+    """スプレッドシートロガーを取得（遅延インポート）"""
+    try:
+        from bot.spreadsheet_logger import log_thread_creation, log_thread_close
+        return log_thread_creation, log_thread_close
+    except ImportError:
+        logger.warning("スプレッドシートロガーモジュールがインポートできませんでした")
+        # ダミー関数を返す
+        dummy = lambda *args, **kwargs: False
+        return dummy, dummy
+    
+
 logger = setup_logger(__name__)
 
 # スレッド監視状態を追跡するディクショナリ
@@ -116,6 +129,24 @@ async def create_thread_from_message(
         
         # スレッド作成者情報を保存
         thread_creators[thread.id] = message.author.id
+
+        # スプレッドシートにログ記録（非同期・非ブロッキング）
+        try:
+            # スプレッドシートロガーを取得（遅延インポート）
+            log_thread_creation, _ = get_spreadsheet_logger()
+            
+            # ログを記録（キューに追加するだけなのでブロッキングしない）
+            log_result = log_thread_creation(
+                thread_id=thread.id,
+                username=message.author.display_name
+            )
+            
+            if log_result:
+                logger.debug(f"スレッド作成ログをキューに追加しました: ID={thread.id}, ユーザー={message.author.display_name}")
+            
+        except Exception as e:
+            logger.error(f"スプレッドシートログ記録エラー: {e}")
+
         logger.info(f"スレッド作成者情報を保存しました: スレッドID={thread.id}, 作成者ID={message.author.id}")
         
         # 締め切りボタンを含むメッセージを送信
@@ -218,6 +249,31 @@ async def close_thread(
         # スレッド作成者情報を削除（スレッドが閉じられたため）
         if thread.id in thread_creators:
             del thread_creators[thread.id]
+            
+            # スプレッドシートにログ記録（非同期・非ブロッキング）
+            try:
+                # スレッド作成者情報があれば、その情報でログを残す
+                author_id = thread_creators.get(thread.id)
+                if author_id:
+                    # スレッド作成者のユーザーオブジェクトを取得
+                    guild = thread.guild
+                    if guild:
+                        member = guild.get_member(author_id)
+                        if member:
+                            username = member.display_name
+                            # スプレッドシートロガーを取得（遅延インポート）
+                            _, log_thread_close = get_spreadsheet_logger()
+                            
+                            # ログを記録（キューに追加するだけなのでブロッキングしない）
+                            log_result = log_thread_close(
+                                thread_id=thread.id,
+                                username=username
+                            )
+                            
+                            if log_result:
+                                logger.debug(f"スレッド締め切りログをキューに追加しました: ID={thread.id}, ユーザー={username}")
+            except Exception as e:
+                logger.error(f"スプレッドシートログ記録エラー: {e}")
             logger.info(f"スレッド '{original_name}' (ID: {thread.id}) の作成者情報を削除しました")
         
         logger.info(f"スレッド名を変更しました: '{original_name}' → '{new_name}' (ID: {thread.id})")
