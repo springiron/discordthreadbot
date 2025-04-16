@@ -4,5 +4,7 @@ app/.env
 
 data/config.json
 
-*.pyc
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
