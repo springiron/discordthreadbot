@@ -3,3 +3,6 @@
 app/.env
 
 data/config.json
+
+*.pyc
+__pycache__/

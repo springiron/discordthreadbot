@@ -335,12 +335,7 @@ class ThreadBot(commands.Bot):
             if not IGNORED_BOT_IDS:
                 desc = "無視するBotは設定されていません"
             else:
-                bots = []
-                for bot_id in IGNORED_BOT_IDS:
-                    bot_user = self.get_user(bot_id)
-                    bot_name = f"{bot_user.name}" if bot_user else f"ID:{bot_id}"
-                    bots.append(bot_name)
-                desc = "無視するBot: " + ", ".join(bots)
+                desc = "無視するBot: " + IGNORED_BOT_IDS
             
             embed = discord.Embed(title="無視するBotリスト", description=desc, color=discord.Color.green())
             

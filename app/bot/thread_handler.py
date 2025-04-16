@@ -404,6 +404,7 @@ async def monitor_thread(
             if thread:
                 # まだスレッドに参加中なら退出
                 try:
+                    # Threadから退出をメッセ―ジ
                     await thread.leave()
                     logger.info(f"スレッド '{thread.name}' (ID: {thread_id}) から退出しました")
                 except:
@@ -461,10 +462,7 @@ async def process_thread_message(
         # スレッドを締め切る
         success = await close_thread(thread, closed_name_template)
         
-        if success:
-            # 締め切り成功メッセージを送信
-            await thread.send(f"🔒 スレッドを締め切りました（キーワード `{message.content}` による）")
-            
+        if success:            
             # 監視タスクを終了
             if thread.id in monitored_threads:
                 monitored_threads[thread.id].cancel()
@@ -572,7 +570,7 @@ class CloseThreadButton(Button):
             await thread.edit(name=new_name)
             
             # 応答を送信
-            await interaction.response.send_message(f"✅ スレッドを締め切りました: '{original_name}' → '{new_name}'")
+            await interaction.response.send_message(f"✅ 募集を締め切りました")
             
             # 親メッセージ（募集メッセージ）にリアクションを追加
             try:
@@ -592,7 +590,7 @@ class CloseThreadButton(Button):
                 # リアクションを追加
                 if starter_message:
                     # 締め切りを示すリアクション絵文字
-                    closed_emoji = "🔒"  # 鍵の絵文字
+                    closed_emoji = "⛔"  # 鍵の絵文字
                     
                     # リアクションを追加
                     await starter_message.add_reaction(closed_emoji)
