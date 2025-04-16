@@ -63,7 +63,7 @@ class AsyncSpreadsheetClient:
         self.spreadsheet_id = spreadsheet_id
         self.sheet_name = sheet_name
         self.agcm = None  # 非同期クライアントマネージャー
-        self._headers = ["ID", "ユーザー名", "日時", "状態", "固定値"]
+        self._headers = ["ユーザID", "ユーザー名", "ログ記載時間", "種別"]
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 3
         self._lock = asyncio.Lock()  # 同時書き込み防止用ロック
@@ -223,7 +223,17 @@ class AsyncSpreadsheetClient:
         同期的に行を追加する内部メソッド（executor用）
         """
         try:
-            worksheet.append_row(row_data)
+            # 非同期メソッドではなく、同期的なgspreadのメソッドを使用
+            # gspread.worksheetのメソッドを使う必要があります（非asyncio版）
+            # GspreadClientManagerのget_clientメソッドを使うか、
+            # または別の方法で同期的にワークシートを取得して操作する
+            
+            # 例えば:
+            creds = get_creds(self.credentials_file)
+            gc = gspread.authorize(creds)
+            spreadsheet = gc.open_by_key(self.spreadsheet_id)
+            wks = spreadsheet.worksheet(self.sheet_name)
+            wks.append_row(row_data)
             return True
         except Exception as e:
             logger.error(f"行追加エラー: {e}")

@@ -131,7 +131,7 @@ def _log_worker():
             thread_id = log_entry.get("thread_id")
             username = log_entry.get("username")
             fixed_value = log_entry.get("fixed_value")
-            status = log_entry.get("status", "作成")
+            status = log_entry.get("status", "募集作成")
             
             # クライアントを取得
             client = get_spreadsheet_client()
@@ -204,7 +204,7 @@ def stop_worker():
         _worker_thread.join(timeout=5.0)
         logger.info("スプレッドシートログ記録ワーカーが終了しました")
 
-def queue_thread_log(thread_id: int, username: str, status: str = "作成") -> bool:
+def queue_thread_log(thread_id: int, username: str, status: str = "募集作成") -> bool:
     """
     スレッドログをキューに追加（非ブロッキング）
     
@@ -253,7 +253,7 @@ def log_thread_creation(thread_id: int, username: str) -> bool:
     Returns:
         bool: キューへの追加成功時はTrue
     """
-    return queue_thread_log(thread_id, username, "作成")
+    return queue_thread_log(thread_id, username, "募集作成")
 
 def log_thread_close(thread_id: int, username: str) -> bool:
     """
