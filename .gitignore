@@ -8,3 +8,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# .env や認証ファイルを除外
+*.env
+*.json
