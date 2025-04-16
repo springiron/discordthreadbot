@@ -1,5 +1,5 @@
 .venv/
 
 app/.env
-
+app/.env.honban
 data/config.json

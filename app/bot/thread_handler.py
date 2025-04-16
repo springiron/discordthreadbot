@@ -347,8 +347,8 @@ async def monitor_thread(
             # スレッドが存在する場合のみ
             if thread:
                 # まだスレッドに参加中なら退出
-                try:
-                    # Threadから退出をメッセ―ジ
+                try:                 
+                    # スレッドからBotを退出
                     await thread.leave()
                     logger.info(f"スレッド '{thread.name}' (ID: {thread_id}) から退出しました")
                 except:
