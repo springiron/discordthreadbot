@@ -23,8 +23,26 @@ from bot.client import ThreadBot
 from config import DISCORD_BOT_TOKEN as BOT_TOKEN
 from utils.logger import setup_logger
 
+try:
+    from config import SPREADSHEET_LOGGING_ENABLED
+    spreadsheet_logging_enabled = SPREADSHEET_LOGGING_ENABLED
+except ImportError:
+    spreadsheet_logging_enabled = False
 # メインロガーを設定
 logger = setup_logger("main")
+
+# スプレッドシートログ機能が有効な場合、モジュールを初期化
+if spreadsheet_logging_enabled:
+    try:
+        from bot.spreadsheet_logger import get_spreadsheet_client
+        spreadsheet_client = get_spreadsheet_client()
+        if spreadsheet_client:
+            logger.info("スプレッドシートログ機能を初期化しました")
+        else:
+            logger.warning("スプレッドシートログ機能の初期化に失敗しました")
+    except ImportError as e:
+        logger.warning(f"スプレッドシートログモジュールのインポートに失敗しました: {e}")
+        spreadsheet_logging_enabled = False
 
 # グローバル変数
 bot_instance = None

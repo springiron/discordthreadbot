@@ -3,3 +3,4 @@
 app/.env
 app/.env.honban
 data/config.json
+data/credentials.json
