@@ -119,6 +119,28 @@ async def create_thread_from_message(
         Optional[discord.Thread]: 作成されたスレッド。失敗した場合はNone
     """
     try:
+        # auto_archive_durationとmonitoring_durationが文字列なら整数に変換
+        if isinstance(auto_archive_duration, str):
+            try:
+                auto_archive_duration = int(auto_archive_duration)
+            except ValueError:
+                logger.error(f"無効なauto_archive_duration値: {auto_archive_duration}、デフォルト値の10080を使用します")
+                auto_archive_duration = 10080
+                
+        # Discord APIが許可する有効な値のみを使用（60, 1440, 4320, 10080）
+        valid_archive_durations = [60, 1440, 4320, 10080]
+        if auto_archive_duration not in valid_archive_durations:
+            # 最も近い有効な値を選択
+            auto_archive_duration = min(valid_archive_durations, key=lambda x: abs(x - auto_archive_duration))
+            logger.info(f"auto_archive_durationを有効な値 {auto_archive_duration} に調整しました")
+                
+        if isinstance(monitoring_duration, str):
+            try:
+                monitoring_duration = int(monitoring_duration)
+            except ValueError:
+                logger.error(f"無効なmonitoring_duration値: {monitoring_duration}、デフォルト値の43200を使用します")
+                monitoring_duration = 43200
+          
         # スレッド作成を試みる
         thread = await message.create_thread(
             name=name,
@@ -290,7 +312,6 @@ async def close_thread(
     
     return False
 
-
 async def monitor_thread(
     bot: discord.Client,
     thread: discord.Thread,
@@ -402,6 +423,14 @@ async def monitor_thread(
         try:
             # スレッドが存在する場合のみ
             if thread:
+                # モニタリング時間終了による締め切り
+                # まずスレッドがまだ締め切られていないことを確認
+                close_marker = closed_name_template.format(original_name="").strip()
+                if not (close_marker and close_marker in thread.name):
+                    # スレッド名を変更
+                    await close_thread(thread, closed_name_template)
+                    logger.info(f"スレッド '{thread.name}' (ID: {thread_id}) のモニタリング時間終了により締め切りました")
+                
                 # まだスレッドに参加中なら退出
                 try:                 
                     # スレッドからBotを退出
