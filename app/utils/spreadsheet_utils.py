@@ -11,7 +11,7 @@ import gspread
 import gspread_asyncio
 from google.oauth2.service_account import Credentials
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import time
 import functools
 from concurrent.futures import ThreadPoolExecutor
@@ -161,7 +161,8 @@ class AsyncSpreadsheetClient:
                         return False
                 
                 # 現在時刻を取得
-                now = datetime.now().strftime('%Y/%m/%d %H:%M:%S')
+                jst = timezone(timedelta(hours=9))
+                now = datetime.now(jst).strftime('%Y/%m/%d %H:%M:%S JST')
                 
                 # 行データを作成
                 row_data = [str(thread_id), username, now, status, fixed_value]
