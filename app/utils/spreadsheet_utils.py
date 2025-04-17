@@ -162,7 +162,7 @@ class AsyncSpreadsheetClient:
                 
                 # 現在時刻を取得
                 jst = timezone(timedelta(hours=9))
-                now = datetime.now(jst).strftime('%Y/%m/%d %H:%M:%S JST')
+                now = datetime.now(jst).strftime('%Y/%m/%d %H:%M:%S')
                 
                 # 行データを作成
                 row_data = [str(thread_id), username, now, status, fixed_value]
