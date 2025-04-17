@@ -71,10 +71,22 @@ class ThreadBot(commands.Bot):
         if ENABLED_CHANNEL_IDS and channel_id not in ENABLED_CHANNEL_IDS:
             return
         
-        # 無視するBotからのメッセージをスキップ
-        if message.author.bot and str(message.author.id) in map(str, IGNORED_BOT_IDS):
-            logger.debug(f"無視リストに含まれるBot (ID: {message.author.id}) からのメッセージをスキップします")
-            return
+        # 無視するBotからのメッセージをスキップするロジックの前に追加
+        if message.author.bot:
+            logger.debug(f"Botからのメッセージを検出: Bot ID={message.author.id}, 無視リスト={IGNORED_BOT_IDS}")
+
+            # 型変換を明示的に行って比較
+            author_id_str = str(message.author.id)
+
+            # IGNORED_BOT_IDSをカンマ区切りでリスト化
+            ignored_ids_str = IGNORED_BOT_IDS.split(",") if IGNORED_BOT_IDS else []
+            
+            logger.debug(f"比較: {author_id_str} in {ignored_ids_str} = {author_id_str in ignored_ids_str}")
+            
+            for ignored_id in ignored_ids_str:
+                if author_id_str == ignored_id.strip():
+                    logger.debug(f"無視リストに含まれるBot (ID: {message.author.id}) からのメッセージをスキップします")
+                    return
             
         # スレッド作成条件をチェック
         if should_create_thread(message, TRIGGER_KEYWORDS):

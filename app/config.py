@@ -47,9 +47,10 @@ DEFAULT_CONFIG = {
     "SPREADSHEET_CREDENTIALS_FILE": os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "credentials.json"),
     "SPREADSHEET_ID": "",
     "SPREADSHEET_SHEET_NAME": "スレッドログ",
-    "SPREADSHEET_FIXED_VALUE": "未定",
-    "SPREADSHEET_LOG_QUEUE_SIZE": 100  # 最大キューサイズ
-
+    "SPREADSHEET_LOG_QUEUE_SIZE": 100,  # 最大キューサイズ
+    # スレッド状態の種別名を追加
+    "THREAD_STATUS_CREATION": "募集開始",
+    "THREAD_STATUS_CLOSING": "募集終了"
 }
 
 # 編集可能な設定と説明
@@ -140,11 +141,17 @@ EDITABLE_SETTINGS = {
         "options": [],
         "help_text": "ログを記録するシート名を設定します。存在しない場合は自動的に作成されます。"
     },
-    "SPREADSHEET_FIXED_VALUE": {
-        "description": "ログに記録する固定値",
+    "THREAD_STATUS_CREATION": {
+        "description": "スレッド作成時の種別名",
         "type": "str",
         "options": [],
-        "help_text": "スレッドログに記録する固定値を設定します。"
+        "help_text": "スレッド作成時にスプレッドシートに記録する種別名を設定します。"
+    },
+    "THREAD_STATUS_CLOSING": {
+        "description": "スレッド締め切り時の種別名",
+        "type": "str",
+        "options": [],
+        "help_text": "スレッド締め切り時にスプレッドシートに記録する種別名を設定します。"
     }
 }
 
@@ -200,7 +207,8 @@ def load_config():
         "SPREADSHEET_CREDENTIALS_FILE": os.environ.get("SPREADSHEET_CREDENTIALS_FILE"),
         "SPREADSHEET_ID": os.environ.get("SPREADSHEET_ID"),
         "SPREADSHEET_SHEET_NAME": os.environ.get("SPREADSHEET_SHEET_NAME"),
-        "SPREADSHEET_FIXED_VALUE": os.environ.get("SPREADSHEET_FIXED_VALUE")
+        "THREAD_STATUS_CREATION": os.environ.get("THREAD_STATUS_CREATION"),
+        "THREAD_STATUS_CLOSING": os.environ.get("THREAD_STATUS_CLOSING")
     }
     
     # 環境変数の値が存在する場合のみ上書き
@@ -374,8 +382,9 @@ SPREADSHEET_LOGGING_ENABLED = config_values["SPREADSHEET_LOGGING_ENABLED"]
 SPREADSHEET_CREDENTIALS_FILE = config_values["SPREADSHEET_CREDENTIALS_FILE"]
 SPREADSHEET_ID = config_values["SPREADSHEET_ID"]
 SPREADSHEET_SHEET_NAME = config_values["SPREADSHEET_SHEET_NAME"]
-SPREADSHEET_FIXED_VALUE = config_values["SPREADSHEET_FIXED_VALUE"]
 SPREADSHEET_LOG_QUEUE_SIZE = config_values["SPREADSHEET_LOG_QUEUE_SIZE"]
+THREAD_STATUS_CREATION = config_values["THREAD_STATUS_CREATION"]
+THREAD_STATUS_CLOSING = config_values["THREAD_STATUS_CLOSING"]
 
 # Bot設定の辞書形式
 BOT_CONFIG = {
@@ -388,7 +397,8 @@ def _update_global_settings(setting_name, new_value):
     global TRIGGER_KEYWORDS, ENABLED_CHANNEL_IDS, THREAD_AUTO_ARCHIVE_DURATION, THREAD_NAME_TEMPLATE, ADMIN_USER_IDS
     global THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION, IGNORED_BOT_IDS
     global SPREADSHEET_LOGGING_ENABLED, SPREADSHEET_CREDENTIALS_FILE, SPREADSHEET_ID
-    global SPREADSHEET_SHEET_NAME, SPREADSHEET_FIXED_VALUE, SPREADSHEET_LOG_QUEUE_SIZE
+    global SPREADSHEET_SHEET_NAME, SPREADSHEET_LOG_QUEUE_SIZE
+    global THREAD_STATUS_CREATION, THREAD_STATUS_CLOSING
     
     # 設定値は config.py の update_setting() で既に適切な型に変換されているため
     # ここでは単にグローバル変数に代入するだけでOK
@@ -420,7 +430,10 @@ def _update_global_settings(setting_name, new_value):
         SPREADSHEET_ID = new_value
     elif setting_name == "SPREADSHEET_SHEET_NAME":
         SPREADSHEET_SHEET_NAME = new_value
-    elif setting_name == "SPREADSHEET_FIXED_VALUE":
-        SPREADSHEET_FIXED_VALUE = new_value
     elif setting_name == "SPREADSHEET_LOG_QUEUE_SIZE":
         SPREADSHEET_LOG_QUEUE_SIZE = new_value
+    # スレッド状態の種別名を追加
+    elif setting_name == "THREAD_STATUS_CREATION":
+        THREAD_STATUS_CREATION = new_value
+    elif setting_name == "THREAD_STATUS_CLOSING":
+        THREAD_STATUS_CLOSING = new_value

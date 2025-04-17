@@ -63,7 +63,7 @@ class AsyncSpreadsheetClient:
         self.spreadsheet_id = spreadsheet_id
         self.sheet_name = sheet_name
         self.agcm = None  # 非同期クライアントマネージャー
-        self._headers = ["ユーザID", "ユーザー名", "ログ記載時間", "種別"]
+        self._headers = ["ユーザID", "ユーザー名", "ログ記載時間", "種別", "VC接続開始時間", "VC接続終了時間"]
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 3
         self._lock = asyncio.Lock()  # 同時書き込み防止用ロック
@@ -93,7 +93,7 @@ class AsyncSpreadsheetClient:
             try:
                 worksheet = await spreadsheet.worksheet(self.sheet_name)
                 # ヘッダー行を確認し、必要なら追加
-                values = await worksheet.get_values("A1:E1")
+                values = await worksheet.get_values("A1:F1")
                 if not values or values[0] != self._headers:
                     await worksheet.update("A1:E1", [self._headers])
                     logger.info(f"シート '{self.sheet_name}' のヘッダーを設定しました")
@@ -166,9 +166,15 @@ class AsyncSpreadsheetClient:
                 # 行データを作成
                 row_data = [str(thread_id), username, now, status, fixed_value]
                 
-                # 現在実行中のイベントループを取得
-                current_loop = asyncio.get_running_loop()
-                
+                try:
+                    # 現在実行中のイベントループを取得
+                    current_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # ループが閉じられている場合は新しいループを作成
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    current_loop = loop
+                    
                 # 非同期でスプレッドシートに追加
                 agc = await self.agcm.authorize()
                 spreadsheet = await agc.open_by_key(self.spreadsheet_id)
@@ -210,7 +216,7 @@ class AsyncSpreadsheetClient:
                         try:
                             if await self.connect():
                                 # 再接続成功したら再度追加を試みる
-                                return await self.add_thread_log(thread_id, username, fixed_value, status)
+                                return await self.add_thread_log(thread_id, username, status)
                         except Exception as reconnect_error:
                             logger.error(f"再接続エラー: {reconnect_error}")
                     else:

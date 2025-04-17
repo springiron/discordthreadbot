@@ -16,7 +16,8 @@ from datetime import datetime
 
 from config import (
     SPREADSHEET_LOGGING_ENABLED, SPREADSHEET_CREDENTIALS_FILE,
-    SPREADSHEET_ID, SPREADSHEET_SHEET_NAME, SPREADSHEET_FIXED_VALUE
+    SPREADSHEET_ID, SPREADSHEET_SHEET_NAME, SPREADSHEET_LOG_QUEUE_SIZE,
+    THREAD_STATUS_CREATION, THREAD_STATUS_CLOSING
 )
 from utils.spreadsheet_utils import AsyncSpreadsheetClient
 from utils.logger import setup_logger
@@ -28,14 +29,8 @@ _spreadsheet_client = None
 _client_lock = threading.Lock()
 
 # バックグラウンド処理用のキュー
-# 設定値からキューサイズを取得、または100をデフォルト値として使用
-queue_size = 100
-try:
-    from config import SPREADSHEET_LOG_QUEUE_SIZE
-    if isinstance(SPREADSHEET_LOG_QUEUE_SIZE, int) and SPREADSHEET_LOG_QUEUE_SIZE > 0:
-        queue_size = SPREADSHEET_LOG_QUEUE_SIZE
-except (ImportError, AttributeError):
-    pass
+# 設定値からキューサイズを取得
+queue_size = SPREADSHEET_LOG_QUEUE_SIZE if isinstance(SPREADSHEET_LOG_QUEUE_SIZE, int) and SPREADSHEET_LOG_QUEUE_SIZE > 0 else 100
 
 _log_queue = queue.Queue(maxsize=queue_size)
 _worker_thread = None
@@ -143,14 +138,31 @@ def _log_worker():
             # ワーカー専用ループで非同期関数を実行
             try:
                 # スプレッドシートにログを記録
-                result = worker_loop.run_until_complete(
-                    client.add_thread_log(
-                        thread_id=str(thread_id),
-                        username=username,
-                        fixed_value=fixed_value,
-                        status=status
+                # ループが閉じられている場合に備えて例外をキャッチ
+                try:
+                    result = worker_loop.run_until_complete(
+                        client.add_thread_log(
+                            thread_id=str(thread_id),
+                            username=username,
+                            fixed_value=fixed_value,
+                            status=status
+                        )
                     )
-                )
+                except RuntimeError as e:
+                    if "Event loop is closed" in str(e):
+                        # ループが閉じられていたら新しいループを作成
+                        worker_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(worker_loop)
+                        result = worker_loop.run_until_complete(
+                            client.add_thread_log(
+                                thread_id=str(thread_id),
+                                username=username,
+                                fixed_value=fixed_value,
+                                status=status
+                            )
+                        )
+                    else:
+                        raise
                 
                 # 結果を保存
                 with _client_lock:
@@ -204,14 +216,14 @@ def stop_worker():
         _worker_thread.join(timeout=5.0)
         logger.info("スプレッドシートログ記録ワーカーが終了しました")
 
-def queue_thread_log(thread_id: int, username: str, status: str = "募集作成") -> bool:
+def queue_thread_log(thread_id: int, username: str, status: str = THREAD_STATUS_CREATION) -> bool:
     """
     スレッドログをキューに追加（非ブロッキング）
     
     Args:
         thread_id: スレッドID
         username: ユーザー名
-        status: 状態（作成/締め切りなど）
+        status: 状態（募集開始/募集終了など）
         
     Returns:
         bool: キューへの追加成功時はTrue
@@ -228,7 +240,6 @@ def queue_thread_log(thread_id: int, username: str, status: str = "募集作成"
     log_entry = {
         "thread_id": thread_id,
         "username": username,
-        "fixed_value": SPREADSHEET_FIXED_VALUE,
         "status": status,
         "timestamp": datetime.now().isoformat()
     }
@@ -253,7 +264,7 @@ def log_thread_creation(thread_id: int, username: str) -> bool:
     Returns:
         bool: キューへの追加成功時はTrue
     """
-    return queue_thread_log(thread_id, username, "募集作成")
+    return queue_thread_log(thread_id, username, THREAD_STATUS_CREATION)
 
 def log_thread_close(thread_id: int, username: str) -> bool:
     """
@@ -266,7 +277,7 @@ def log_thread_close(thread_id: int, username: str) -> bool:
     Returns:
         bool: キューへの追加成功時はTrue
     """
-    return queue_thread_log(thread_id, username, "締め切り")
+    return queue_thread_log(thread_id, username, THREAD_STATUS_CLOSING)
 
 def get_log_status(thread_id: int) -> Optional[Dict]:
     """
