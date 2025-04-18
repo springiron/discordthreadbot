@@ -167,14 +167,15 @@ class AsyncSpreadsheetClient:
                 # 行データを作成
                 row_data = [str(thread_id), username, now, status, fixed_value]
                 
+                # *** ここが重要: イベントループ取得と例外処理 ***
                 try:
                     # 現在実行中のイベントループを取得
                     current_loop = asyncio.get_running_loop()
                 except RuntimeError:
                     # ループが閉じられている場合は新しいループを作成
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    current_loop = loop
+                    logger.warning("イベントループが閉じられています。新しいループを作成します")
+                    current_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(current_loop)
                     
                 # 非同期でスプレッドシートに追加
                 agc = await self.agcm.authorize()
