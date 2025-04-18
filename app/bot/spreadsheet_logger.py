@@ -123,7 +123,7 @@ def _log_worker():
                 break
                 
             # ログエントリを処理
-            thread_id = log_entry.get("thread_id")
+            user_id = log_entry.get("user_id")
             username = log_entry.get("username")
             fixed_value = log_entry.get("fixed_value")
             status = log_entry.get("status", "募集作成")
@@ -142,7 +142,7 @@ def _log_worker():
                 try:
                     result = worker_loop.run_until_complete(
                         client.add_thread_log(
-                            thread_id=str(thread_id),
+                            user_id=str(user_id),
                             username=username,
                             fixed_value=fixed_value,
                             status=status
@@ -155,7 +155,7 @@ def _log_worker():
                         asyncio.set_event_loop(worker_loop)
                         result = worker_loop.run_until_complete(
                             client.add_thread_log(
-                                thread_id=str(thread_id),
+                                user_id=str(user_id),
                                 username=username,
                                 fixed_value=fixed_value,
                                 status=status
@@ -166,20 +166,20 @@ def _log_worker():
                 
                 # 結果を保存
                 with _client_lock:
-                    _logging_status[thread_id] = {
+                    _logging_status[user_id] = {
                         "status": "success" if result else "failed",
                         "timestamp": datetime.now().isoformat(),
                         "username": username,
                         "log_type": status
                     }
                 
-                logger.info(f"スレッドログを記録しました: ID={thread_id}, ユーザー={username}, 状態={status}, 結果={result}")
+                logger.info(f"スレッドログを記録しました: ID={user_id}, ユーザー={username}, 状態={status}, 結果={result}")
                 
             except Exception as e:
                 logger.error(f"ログ記録処理エラー: {e}")
                 # 状態を保存
                 with _client_lock:
-                    _logging_status[thread_id] = {
+                    _logging_status[user_id] = {
                         "status": "error",
                         "error": str(e),
                         "timestamp": datetime.now().isoformat(),
@@ -216,12 +216,12 @@ def stop_worker():
         _worker_thread.join(timeout=5.0)
         logger.info("スプレッドシートログ記録ワーカーが終了しました")
 
-def queue_thread_log(thread_id: int, username: str, status: str = THREAD_STATUS_CREATION) -> bool:
+def queue_thread_log(user_id: int, username: str, status: str = THREAD_STATUS_CREATION) -> bool:
     """
     スレッドログをキューに追加（非ブロッキング）
     
     Args:
-        thread_id: スレッドID
+        user_id: ユーザーID
         username: ユーザー名
         status: 状態（募集開始/募集終了など）
         
@@ -238,7 +238,7 @@ def queue_thread_log(thread_id: int, username: str, status: str = THREAD_STATUS_
     
     # ログエントリを作成
     log_entry = {
-        "thread_id": thread_id,
+        "user_id": user_id,
         "username": username,
         "status": status,
         "timestamp": datetime.now().isoformat()
@@ -247,39 +247,39 @@ def queue_thread_log(thread_id: int, username: str, status: str = THREAD_STATUS_
     # キューに追加（非ブロッキング）
     try:
         _log_queue.put(log_entry, block=False)
-        logger.debug(f"スレッドログをキューに追加しました: ID={thread_id}, ユーザー={username}, 状態={status}")
+        logger.debug(f"スレッドログをキューに追加しました: ID={user_id}, ユーザー={username}, 状態={status}")
         return True
     except queue.Full:
-        logger.warning(f"ログキューがいっぱいです。ログを破棄します: ID={thread_id}, ユーザー={username}")
+        logger.warning(f"ログキューがいっぱいです。ログを破棄します: ID={user_id}, ユーザー={username}")
         return False
 
-def log_thread_creation(thread_id: int, username: str) -> bool:
+def log_thread_creation(user_id: int, username: str) -> bool:
     """
     スレッド作成をログ記録キューに追加
     
     Args:
-        thread_id: スレッドID
+        user_id: ユーザーID
         username: ユーザー名
         
     Returns:
         bool: キューへの追加成功時はTrue
     """
-    return queue_thread_log(thread_id, username, THREAD_STATUS_CREATION)
+    return queue_thread_log(user_id, username, THREAD_STATUS_CREATION)
 
-def log_thread_close(thread_id: int, username: str) -> bool:
+def log_thread_close(user_id: int, username: str) -> bool:
     """
     スレッド締め切りをログ記録キューに追加
     
     Args:
-        thread_id: スレッドID
+        user_id: ユーザーID
         username: ユーザー名
         
     Returns:
         bool: キューへの追加成功時はTrue
     """
-    return queue_thread_log(thread_id, username, THREAD_STATUS_CLOSING)
+    return queue_thread_log(user_id, username, THREAD_STATUS_CLOSING)
 
-def get_log_status(thread_id: int) -> Optional[Dict]:
+def get_log_status(user_id: int) -> Optional[Dict]:
     """
     特定のスレッドのログ記録状態を取得
     
@@ -290,7 +290,7 @@ def get_log_status(thread_id: int) -> Optional[Dict]:
         Optional[Dict]: ログ記録状態の辞書、存在しない場合はNone
     """
     with _client_lock:
-        return _logging_status.get(thread_id)
+        return _logging_status.get(user_id)
 
 def cleanup():
     """終了時のクリーンアップ処理"""

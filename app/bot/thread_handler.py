@@ -159,7 +159,7 @@ async def create_thread_from_message(
             
             # ログを記録（キューに追加するだけなのでブロッキングしない）
             log_result = log_thread_creation(
-                thread_id=thread.id,
+                user_id=message.author.id,
                 username=message.author.display_name
             )
             
@@ -288,7 +288,7 @@ async def close_thread(
                             
                             # ログを記録（キューに追加するだけなのでブロッキングしない）
                             log_result = log_thread_close(
-                                thread_id=thread.id,
+                                user_id=author_id,  # ユーザーIDを追加
                                 username=username
                             )
                             
