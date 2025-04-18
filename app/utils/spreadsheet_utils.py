@@ -139,12 +139,11 @@ class AsyncSpreadsheetClient:
             logger.error(f"ワークシート作成エラー: {e}")
             raise
     
-    async def add_thread_log(self, thread_id: str, user_id: str, username: str, fixed_value: str, status: str = "作成") -> bool:
+    async def add_thread_log(self, user_id: str, username: str, fixed_value: str, status: str = "作成") -> bool:
         """
         スレッドログを非同期で追加
         
         Args:
-            thread_id: スレッドID
             user_id: ユーザーID
             username: ユーザー名
             fixed_value: 固定値
@@ -166,7 +165,7 @@ class AsyncSpreadsheetClient:
                 now = datetime.now(jst).strftime('%Y/%m/%d %H:%M:%S')
                 
                 # 行データを作成（最初の列にユーザーIDを設定）
-                row_data = [str(user_id), username, now, status, fixed_value, str(thread_id)]
+                row_data = [str(user_id), username, now, status, fixed_value]
                 
                 # *** ここが重要: イベントループ取得と例外処理 ***
                 try:
@@ -194,7 +193,7 @@ class AsyncSpreadsheetClient:
                     )
                 )
                 
-                logger.info(f"スレッドログを記録しました: ID={thread_id}, ユーザーID={user_id}, ユーザー={username}, 状態={status}")
+                logger.info(f"スレッドログを記録しました: ユーザーID={user_id}, ユーザー={username}, 状態={status}")
                 self._reconnect_attempts = 0
                 return True
                 
@@ -219,7 +218,7 @@ class AsyncSpreadsheetClient:
                         try:
                             if await self.connect():
                                 # 再接続成功したら再度追加を試みる
-                                return await self.add_thread_log(thread_id, username, status)
+                                return await self.add_thread_log(user_id, username, status)
                         except Exception as reconnect_error:
                             logger.error(f"再接続エラー: {reconnect_error}")
                     else:
