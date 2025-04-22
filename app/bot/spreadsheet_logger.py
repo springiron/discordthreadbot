@@ -106,12 +106,23 @@ def _log_worker():
     """キューからログエントリを処理するワーカー関数"""
     logger.info("スプレッドシートログ記録ワーカーを開始しました")
     
-    # ワーカー専用のイベントループを作成
-    worker_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(worker_loop)
+    # 初期化
+    worker_loop = None
+    retry_count = 0
+    max_retries = 3
     
     while not _stop_worker.is_set():
         try:
+            # イベントループ確認・作成
+            if worker_loop is None or worker_loop.is_closed():
+                # 以前のループが閉じられていたら新しいループを作成
+                if worker_loop is not None:
+                    logger.info("イベントループが閉じられているため、新しいループを作成します")
+                
+                worker_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(worker_loop)
+                logger.debug("ワーカー用の新しいイベントループを作成しました")
+            
             # キューからログエントリを取得（タイムアウト付き）
             try:
                 log_entry = _log_queue.get(timeout=1.0)
@@ -138,21 +149,18 @@ def _log_worker():
             # ワーカー専用ループで非同期関数を実行
             try:
                 # スプレッドシートにログを記録
-                # ループが閉じられている場合に備えて例外をキャッチ
-                try:
-                    result = worker_loop.run_until_complete(
-                        client.add_thread_log(
-                            user_id=str(user_id),
-                            username=username,
-                            fixed_value=fixed_value,
-                            status=status
-                        )
-                    )
-                except RuntimeError as e:
-                    if "Event loop is closed" in str(e):
-                        # ループが閉じられていたら新しいループを作成
-                        worker_loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(worker_loop)
+                retry_count = 0
+                max_backoff_time = 5  # 最大バックオフ時間（秒）
+                
+                while retry_count <= max_retries:
+                    try:
+                        # イベントループ状態を再確認
+                        if worker_loop.is_closed():
+                            logger.warning("実行直前にイベントループが閉じられました。再作成します")
+                            worker_loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(worker_loop)
+                        
+                        # 非同期処理を実行
                         result = worker_loop.run_until_complete(
                             client.add_thread_log(
                                 user_id=str(user_id),
@@ -161,8 +169,52 @@ def _log_worker():
                                 status=status
                             )
                         )
-                    else:
-                        raise
+                        
+                        # 成功したらループを抜ける
+                        break
+                        
+                    except RuntimeError as e:
+                        if "Event loop is closed" in str(e):
+                            # ループが閉じられていたら新しいループを作成
+                            retry_count += 1
+                            logger.warning(f"イベントループエラーが発生しました (再試行 {retry_count}/{max_retries}): {e}")
+                            
+                            # 古いループを閉じる（まだ閉じられていない場合）
+                            try:
+                                if not worker_loop.is_closed():
+                                    worker_loop.close()
+                            except Exception:
+                                pass
+                            
+                            # 新しいループを作成
+                            worker_loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(worker_loop)
+                            
+                            # バックオフ待機（指数バックオフ）
+                            backoff_time = min(max_backoff_time, (2 ** retry_count) / 2)
+                            logger.info(f"再試行前に {backoff_time:.1f}秒待機します...")
+                            time.sleep(backoff_time)
+                        else:
+                            # 他のエラーは上位レベルで処理
+                            raise
+                    
+                    except Exception as e:
+                        retry_count += 1
+                        logger.error(f"ログ記録処理エラー (再試行 {retry_count}/{max_retries}): {e}")
+                        
+                        if retry_count <= max_retries:
+                            # バックオフ待機
+                            backoff_time = min(max_backoff_time, (2 ** retry_count) / 2)
+                            logger.info(f"再試行前に {backoff_time:.1f}秒待機します...")
+                            time.sleep(backoff_time)
+                        else:
+                            # 最大再試行回数を超えた
+                            logger.error(f"最大再試行回数に達しました: {e}")
+                            break
+                
+                # 最大再試行回数を超えても失敗した場合
+                if retry_count > max_retries:
+                    result = False
                 
                 # 結果を保存
                 with _client_lock:
@@ -170,7 +222,8 @@ def _log_worker():
                         "status": "success" if result else "failed",
                         "timestamp": datetime.now().isoformat(),
                         "username": username,
-                        "log_type": status
+                        "log_type": status,
+                        "retries": retry_count
                     }
                 
                 logger.info(f"スレッドログを記録しました: ID={user_id}, ユーザー={username}, 状態={status}, 結果={result}")
@@ -195,7 +248,12 @@ def _log_worker():
             time.sleep(1)
     
     # ループを閉じてリソースを解放
-    worker_loop.close()
+    if worker_loop is not None and not worker_loop.is_closed():
+        try:
+            worker_loop.close()
+        except Exception as e:
+            logger.error(f"イベントループ終了エラー: {e}")
+    
     logger.info("スプレッドシートログ記録ワーカーを終了しました")
 
 def stop_worker():
