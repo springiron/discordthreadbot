@@ -12,6 +12,8 @@ import gspread_asyncio
 from google.oauth2.service_account import Credentials
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
+import random
+import traceback
 import time
 import functools
 from concurrent.futures import ThreadPoolExecutor
@@ -141,91 +143,122 @@ class AsyncSpreadsheetClient:
     
     async def add_thread_log(self, user_id: str, username: str, fixed_value: str, status: str = "作成") -> bool:
         """
-        スレッドログを非同期で追加
+        スレッドログを非同期で追加（改善版）
         
         Args:
             user_id: ユーザーID
             username: ユーザー名
             fixed_value: 固定値
             status: 状態（作成/締め切りなど）
-            
+                
         Returns:
             bool: 成功時はTrue
         """
         # ロックを取得して同時書き込みを防止
+        start_time = time.time()
+        logger.debug(f"add_thread_log開始: ID={user_id}, ユーザー={username}, 状態={status}")
+        
         async with self._lock:
             try:
+                # 現在のイベントループ情報をログ記録
+                try:
+                    current_loop = asyncio.get_running_loop()
+                    logger.debug(f"現在のイベントループ: ID={id(current_loop)}, 閉じている={current_loop.is_closed()}")
+                except RuntimeError as e:
+                    logger.warning(f"イベントループが存在しないか閉じられています: {e}")
+                    # この場合は新しいループを作成せず、呼び出し元に処理を委任
+                    return False
+                
                 # まだ接続していない場合は接続
                 if self.agcm is None:
-                    if not await self.connect():
+                    connection_result = await self.connect()
+                    if not connection_result:
+                        logger.error("スプレッドシートへの接続に失敗しました")
                         return False
+                    logger.debug("スプレッドシートへの接続に成功しました")
                 
                 # 現在時刻を取得
                 jst = timezone(timedelta(hours=9))
                 now = datetime.now(jst).strftime('%Y/%m/%d %H:%M:%S')
                 
-                # 行データを作成（最初の列にユーザーIDを設定）
+                # 行データを作成
                 row_data = [str(user_id), username, now, status, fixed_value]
                 
-                # *** ここが重要: イベントループ取得と例外処理 ***
+                # 実際の処理を実行
+                logger.debug(f"スプレッドシート書き込み開始: ID={user_id}")
+                
+                # 認証と書き込み処理を分離して、それぞれエラーハンドリングを追加
                 try:
-                    # 現在実行中のイベントループを取得
+                    # 認証部分
+                    agc = await self.agcm.authorize()
+                    logger.debug("スプレッドシート認証成功")
+                    
+                    # スプレッドシート・ワークシート取得部分
+                    spreadsheet = await agc.open_by_key(self.spreadsheet_id)
+                    worksheet = await spreadsheet.worksheet(self.sheet_name)
+                    logger.debug(f"ワークシート '{self.sheet_name}' 取得成功")
+                    
+                    # 現在のループを使って、スレッドセーフな書き込み
                     current_loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    # ループが閉じられている場合は新しいループを作成
-                    logger.warning("イベントループが閉じられています。新しいループを作成します")
-                    current_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(current_loop)
                     
-                # 非同期でスプレッドシートに追加
-                agc = await self.agcm.authorize()
-                spreadsheet = await agc.open_by_key(self.spreadsheet_id)
-                worksheet = await spreadsheet.worksheet(self.sheet_name)
-                
-                # 行の追加（同期的に実行）
-                # 現在のイベントループでrun_in_executorを使用
-                await current_loop.run_in_executor(
-                    thread_executor,
-                    functools.partial(
-                        self._append_row_sync,
-                        worksheet=worksheet,
-                        row_data=row_data
+                    # 実行前にループが有効か確認
+                    if current_loop.is_closed():
+                        logger.error("書き込み実行前にイベントループが閉じられています")
+                        return False
+                    
+                    # 書き込み処理をexecutorで実行
+                    await current_loop.run_in_executor(
+                        thread_executor,
+                        functools.partial(
+                            self._append_row_sync,
+                            worksheet=worksheet,
+                            row_data=row_data
+                        )
                     )
-                )
-                
-                logger.info(f"スレッドログを記録しました: ユーザーID={user_id}, ユーザー={username}, 状態={status}")
-                self._reconnect_attempts = 0
-                return True
-                
-            except Exception as e:
-                logger.error(f"スレッドログ記録エラー: {e}")
-                
-                # 認証エラーの場合は再接続を試みる
-                error_str = str(e).lower()
-                if ("invalid_grant" in error_str or 
-                    "token expired" in error_str or 
-                    "credentials" in error_str or
-                    "different loop" in error_str):
                     
-                    self._reconnect_attempts += 1
-                    if self._reconnect_attempts <= self._max_reconnect_attempts:
-                        logger.info(f"トークンの有効期限切れまたはループエラー。再接続を試みます... (試行 {self._reconnect_attempts}/{self._max_reconnect_attempts})")
-                        self.agcm = None
-                        
-                        # 少し待機してから再接続
-                        await asyncio.sleep(1)
-                        
-                        try:
-                            if await self.connect():
-                                # 再接続成功したら再度追加を試みる
-                                return await self.add_thread_log(user_id, username, status)
-                        except Exception as reconnect_error:
-                            logger.error(f"再接続エラー: {reconnect_error}")
+                    elapsed = time.time() - start_time
+                    logger.info(f"スレッドログを記録しました: ユーザーID={user_id}, ユーザー={username}, 状態={status} (所要時間: {elapsed:.2f}秒)")
+                    self._reconnect_attempts = 0
+                    return True
+                    
+                except gspread.exceptions.APIError as e:
+                    # API固有のエラー
+                    error_code = getattr(e, 'response', {}).get('status', None)
+                    logger.error(f"スプレッドシートAPI例外: コード={error_code}, エラー={e}")
+                    
+                    if error_code in [403, 429]:  # 権限エラーや制限エラー
+                        logger.warning(f"APIレート制限またはアクセス権限の問題が発生しました: {e}")
+                    return False
+                    
+                except (gspread.exceptions.GSpreadException, asyncio.CancelledError, RuntimeError) as e:
+                    error_msg = str(e).lower()
+                    
+                    # イベントループ関連のエラーを詳細に判別
+                    if "loop" in error_msg:
+                        logger.error(f"イベントループエラー: {e}")
+                    elif "token" in error_msg or "credential" in error_msg or "auth" in error_msg:
+                        logger.error(f"認証エラー: {e}")
                     else:
-                        logger.error(f"最大再試行回数を超えました。スプレッドシートログの記録を停止します。")
-                
+                        logger.error(f"スプレッドシート処理エラー: {e}")
+                    
+                    # 再接続が必要なエラーかどうか判断
+                    if ("invalid_grant" in error_msg or 
+                        "token expired" in error_msg or 
+                        "credentials" in error_msg or
+                        "different loop" in error_msg):
+                        
+                        # 次回の処理で再接続されるようにクライアントをリセット
+                        logger.info("認証/接続問題を検出。次回の呼び出しで再接続します")
+                        self.agcm = None
+                    
+                    return False
+                    
+            except Exception as e:
+                elapsed = time.time() - start_time
+                logger.error(f"スレッドログ記録中の予期しないエラー ({elapsed:.2f}秒経過): {e}")
+                logger.debug(f"スタックトレース:\n{traceback.format_exc()}")
                 return False
-
+    
     def _append_row_sync(self, worksheet, row_data):
         """
         同期的に行を追加する内部メソッド（executor用）
