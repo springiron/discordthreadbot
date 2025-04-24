@@ -92,8 +92,27 @@ def _start_worker_thread():
     global _worker_thread, _stop_worker
     
     if _worker_thread is not None and _worker_thread.is_alive():
-        return  # すでに実行中
+        # スレッドが存在して生きている場合、ヘルスチェック実行
+        try:
+            # キューにダミータスクを追加してワーカーが処理できるか確認
+            dummy_task = {
+                "user_id": 0,
+                "username": "_health_check_",
+                "status": "_health_check_",
+                "timestamp": datetime.now().isoformat()
+            }
+            try:
+                _log_queue.put(dummy_task, block=False)
+                logger.debug("ワーカースレッドのヘルスチェックを実行しました")
+            except queue.Full:
+                logger.warning("ワーカースレッドが応答していない可能性があります（キューが満杯）")
+        except Exception as e:
+            logger.warning(f"ワーカースレッドのヘルスチェック中にエラー: {e}")
+        
+        # 既存のスレッドがあるので、そのまま返す
+        return
     
+    # 既存のスレッドが存在しないか、停止している場合は新しいスレッドを開始
     _stop_worker.clear()
     _worker_thread = threading.Thread(
         target=_log_worker,
@@ -210,6 +229,18 @@ def _log_worker():
                     except Exception as e:
                         loop_is_ok = False
                         logger.warning(f"ループ健全性チェックに失敗: {e}")
+                        # ループの再作成を試みる
+                        worker_loop = asyncio.new_event_loop()
+                        last_loop_id = id(worker_loop)
+                        asyncio.set_event_loop(worker_loop)
+                        logger.debug(f"健全性チェック失敗後に新しいループを作成しました (ID={last_loop_id})")
+                        # 再度健全性チェック
+                        try:
+                            worker_loop.run_until_complete(asyncio.sleep(0.01))
+                            loop_is_ok = True
+                        except Exception as e2:
+                            logger.error(f"2回目のループ健全性チェックに失敗: {e2}")
+                            loop_is_ok = False
                     
                     if loop_is_ok:
                         # 本番の非同期処理を実行
@@ -301,6 +332,19 @@ def _log_worker():
             logger.debug(f"エラー詳細:\n{traceback.format_exc()}")
             # エラーが発生しても処理を継続するため短時間待機
             time.sleep(1)
+            
+            # エラーから回復する試み
+            try:
+                # ワーカーループが問題を抱えている可能性がある場合は、完全にリセット
+                if worker_loop is not None:
+                    try:
+                        worker_loop.close()
+                    except Exception:
+                        pass
+                worker_loop = None  # 次のイテレーションで新しいループが作成される
+                logger.info("エラー回復のためにイベントループをリセットしました")
+            except Exception as reset_err:
+                logger.error(f"エラー回復処理中にさらにエラーが発生: {reset_err}")
     
     # ループを閉じてリソースを解放
     if worker_loop is not None:
@@ -376,8 +420,25 @@ def queue_thread_log(user_id: int, username: str, status: str = THREAD_STATUS_CR
         logger.debug(f"スレッドログをキューに追加しました: ID={user_id}, ユーザー={username}, 状態={status}")
         return True
     except queue.Full:
-        logger.warning(f"ログキューがいっぱいです。ログを破棄します: ID={user_id}, ユーザー={username}")
-        return False
+        # キューが満杯の場合、古いエントリを削除して空きを作る
+        try:
+            try:
+                # まず古いエントリを取り出す
+                old_entry = _log_queue.get(block=False)
+                logger.warning(f"キューが満杯のため古いエントリを削除: ID={old_entry.get('user_id')}")
+                _log_queue.task_done()  # タスク完了を通知
+            except queue.Empty:
+                # 競合状態によりキューが空の場合は無視
+                pass
+            
+            # 再度追加を試みる
+            _log_queue.put(log_entry, block=False)
+            logger.debug(f"スレッドログをキューに追加しました(2回目の試行): ID={user_id}, ユーザー={username}")
+            return True
+        except Exception as e:
+            logger.error(f"キュー操作中にエラー: {e}")
+            logger.warning(f"ログキューがいっぱいです。ログを破棄します: ID={user_id}, ユーザー={username}")
+            return False
 
 def log_thread_creation(user_id: int, username: str) -> bool:
     """

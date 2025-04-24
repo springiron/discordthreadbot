@@ -163,66 +163,74 @@ class AsyncSpreadsheetClient:
                 # 現在のイベントループ情報をログ記録
                 try:
                     current_loop = asyncio.get_running_loop()
-                    logger.debug(f"現在のイベントループ: ID={id(current_loop)}, 閉じている={current_loop.is_closed()}")
+                    loop_is_closed = current_loop.is_closed()
+                    logger.debug(f"現在のイベントループ: ID={id(current_loop)}, 閉じている={loop_is_closed}")
+                    
+                    # ループが閉じられている場合は早期リターン
+                    if loop_is_closed:
+                        logger.error("イベントループが閉じられています")
+                        return False
+                        
                 except RuntimeError as e:
-                    logger.warning(f"イベントループが存在しないか閉じられています: {e}")
-                    # この場合は新しいループを作成せず、呼び出し元に処理を委任
+                    logger.error(f"イベントループエラー: {e}")
                     return False
                 
-                # まだ接続していない場合は接続
-                if self.agcm is None:
-                    connection_result = await self.connect()
-                    if not connection_result:
-                        logger.error("スプレッドシートへの接続に失敗しました")
-                        return False
-                    logger.debug("スプレッドシートへの接続に成功しました")
-                
-                # 現在時刻を取得
-                jst = timezone(timedelta(hours=9))
-                now = datetime.now(jst).strftime('%Y/%m/%d %H:%M:%S')
-                
-                # 行データを作成
-                row_data = [str(user_id), username, now, status, fixed_value]
-                
-                # 実際の処理を実行
+                # スプレッドシート書き込み開始
                 logger.debug(f"スプレッドシート書き込み開始: ID={user_id}")
                 
-                # 認証と書き込み処理を分離して、それぞれエラーハンドリングを追加
+                # 認証と書き込み処理
                 try:
-                    # 認証部分
+                    # まだ接続していない場合は接続
+                    if self.agcm is None:
+                        connection_result = await self.connect()
+                        if not connection_result:
+                            logger.error("スプレッドシートへの接続に失敗しました")
+                            return False
+                    
+                    # 認証
                     agc = await self.agcm.authorize()
                     logger.debug("スプレッドシート認証成功")
                     
-                    # スプレッドシート・ワークシート取得部分
+                    # スプレッドシート・ワークシート取得
                     spreadsheet = await agc.open_by_key(self.spreadsheet_id)
                     worksheet = await spreadsheet.worksheet(self.sheet_name)
                     logger.debug(f"ワークシート '{self.sheet_name}' 取得成功")
                     
-                    # 現在のループを使って、スレッドセーフな書き込み
-                    current_loop = asyncio.get_running_loop()
+                    # 現在時刻を取得
+                    jst = timezone(timedelta(hours=9))
+                    now = datetime.now(jst).strftime('%Y/%m/%d %H:%M:%S')
                     
-                    # 実行前にループが有効か確認
-                    if current_loop.is_closed():
-                        logger.error("書き込み実行前にイベントループが閉じられています")
-                        return False
+                    # 行データを作成
+                    row_data = [str(user_id), username, now, status, fixed_value]
                     
-                    # 書き込み処理をexecutorで実行
-                    await current_loop.run_in_executor(
-                        thread_executor,
-                        functools.partial(
-                            self._append_row_sync,
-                            worksheet=worksheet,
-                            row_data=row_data
+                    # 書き込み処理を同期関数で実行
+                    try:
+                        # executor使用の書き込み処理
+                        loop = asyncio.get_event_loop()
+                        if loop.is_closed():
+                            raise RuntimeError("Event loop is closed")
+                            
+                        await loop.run_in_executor(
+                            thread_executor,
+                            functools.partial(
+                                self._append_row_sync,
+                                worksheet=worksheet,
+                                row_data=row_data
+                            )
                         )
-                    )
-                    
-                    elapsed = time.time() - start_time
-                    logger.info(f"スレッドログを記録しました: ユーザーID={user_id}, ユーザー={username}, 状態={status} (所要時間: {elapsed:.2f}秒)")
-                    self._reconnect_attempts = 0
-                    return True
-                    
+                        
+                        elapsed = time.time() - start_time
+                        logger.info(f"スレッドログを記録しました: ユーザーID={user_id}, ユーザー={username}, 状態={status} (所要時間: {elapsed:.2f}秒)")
+                        return True
+                        
+                    except RuntimeError as e:
+                        if "Event loop is closed" in str(e):
+                            logger.error(f"イベントループエラー: {e}")
+                            return False
+                        raise
+                        
                 except gspread.exceptions.APIError as e:
-                    # API固有のエラー
+                    # API固有のエラー処理
                     error_code = getattr(e, 'response', {}).get('status', None)
                     logger.error(f"スプレッドシートAPI例外: コード={error_code}, エラー={e}")
                     
@@ -230,7 +238,7 @@ class AsyncSpreadsheetClient:
                         logger.warning(f"APIレート制限またはアクセス権限の問題が発生しました: {e}")
                     return False
                     
-                except (gspread.exceptions.GSpreadException, asyncio.CancelledError, RuntimeError) as e:
+                except (gspread.exceptions.GSpreadException, asyncio.CancelledError) as e:
                     error_msg = str(e).lower()
                     
                     # イベントループ関連のエラーを詳細に判別
@@ -238,18 +246,10 @@ class AsyncSpreadsheetClient:
                         logger.error(f"イベントループエラー: {e}")
                     elif "token" in error_msg or "credential" in error_msg or "auth" in error_msg:
                         logger.error(f"認証エラー: {e}")
+                        # 再接続のためにクライアントをリセット
+                        self.agcm = None
                     else:
                         logger.error(f"スプレッドシート処理エラー: {e}")
-                    
-                    # 再接続が必要なエラーかどうか判断
-                    if ("invalid_grant" in error_msg or 
-                        "token expired" in error_msg or 
-                        "credentials" in error_msg or
-                        "different loop" in error_msg):
-                        
-                        # 次回の処理で再接続されるようにクライアントをリセット
-                        logger.info("認証/接続問題を検出。次回の呼び出しで再接続します")
-                        self.agcm = None
                     
                     return False
                     
