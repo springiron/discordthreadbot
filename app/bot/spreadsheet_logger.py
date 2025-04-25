@@ -130,7 +130,6 @@ def _log_worker():
                 worker_loop = asyncio.new_event_loop()
                 last_loop_id = id(worker_loop)
                 asyncio.set_event_loop(worker_loop)
-                logger.debug(f"新しいワーカー用イベントループを作成しました (ID={last_loop_id})")
             except Exception as e:
                 logger.error(f"イベントループ作成エラー: {e}")
                 time.sleep(1)  # 短い待機後に再試行
