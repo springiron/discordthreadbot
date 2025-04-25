@@ -92,24 +92,6 @@ def _start_worker_thread():
     global _worker_thread, _stop_worker
     
     if _worker_thread is not None and _worker_thread.is_alive():
-        # スレッドが存在して生きている場合、ヘルスチェック実行
-        try:
-            # キューにダミータスクを追加してワーカーが処理できるか確認
-            dummy_task = {
-                "user_id": 0,
-                "username": "_health_check_",
-                "status": "_health_check_",
-                "timestamp": datetime.now().isoformat()
-            }
-            try:
-                _log_queue.put(dummy_task, block=False)
-                logger.debug("ワーカースレッドのヘルスチェックを実行しました")
-            except queue.Full:
-                logger.warning("ワーカースレッドが応答していない可能性があります（キューが満杯）")
-        except Exception as e:
-            logger.warning(f"ワーカースレッドのヘルスチェック中にエラー: {e}")
-        
-        # 既存のスレッドがあるので、そのまま返す
         return
     
     # 既存のスレッドが存在しないか、停止している場合は新しいスレッドを開始
@@ -134,55 +116,36 @@ def _log_worker():
     
     while not _stop_worker.is_set():
         try:
-            # イベントループ状態のログ記録
-            try:
-                if worker_loop is not None:
-                    current_loop_id = id(worker_loop)
-                    if last_loop_id != current_loop_id:
-                        logger.debug(f"ループID変更: {last_loop_id} -> {current_loop_id}")
-                    last_loop_id = current_loop_id
-                    if worker_loop.is_closed():
-                        logger.debug(f"ループ状態確認: ID={current_loop_id}, 閉じている={worker_loop.is_closed()}")
-            except Exception as e:
-                logger.debug(f"ループ状態確認エラー: {e}")
-            
-            # イベントループ確認・作成 (健全性チェック強化)
-            if worker_loop is None or worker_loop.is_closed():
-                # 既存のループが閉じられているまたは存在しない場合
-                if worker_loop is not None:
-                    logger.info(f"イベントループ(ID={id(worker_loop)})が閉じられているため、新しいループを作成します")
-                    # 古いループの明示的なクリーンアップを試みる
-                    try:
-                        if not worker_loop.is_closed():
-                            worker_loop.close()
-                    except Exception as e:
-                        logger.debug(f"古いループのクリーンアップエラー: {e}")
-                
-                # 新しいループを作成
+            # イベントループ確認・作成 (必ず新しいループを作成する)
+            # 既存のループは閉じて常に新しく作り直す
+            if worker_loop is not None:
                 try:
-                    worker_loop = asyncio.new_event_loop()
-                    last_loop_id = id(worker_loop)
-                    asyncio.set_event_loop(worker_loop)
-                    logger.debug(f"新しいワーカー用イベントループを作成しました (ID={last_loop_id})")
+                    if not worker_loop.is_closed():
+                        worker_loop.close()
                 except Exception as e:
-                    logger.error(f"イベントループ作成エラー: {e}")
-                    time.sleep(1)  # 短い待機後に再試行
-                    continue
+                    logger.debug(f"古いループのクリーンアップエラー: {e}")
+            
+            # 新しいループを常に作成
+            try:
+                worker_loop = asyncio.new_event_loop()
+                last_loop_id = id(worker_loop)
+                asyncio.set_event_loop(worker_loop)
+                logger.debug(f"新しいワーカー用イベントループを作成しました (ID={last_loop_id})")
+            except Exception as e:
+                logger.error(f"イベントループ作成エラー: {e}")
+                time.sleep(1)  # 短い待機後に再試行
+                continue
             
             # キューからログエントリを取得（タイムアウト付き）
             try:
                 log_entry = _log_queue.get(timeout=1.0)
             except queue.Empty:
-                # 定期的にループの健全性チェックを実行
-                if random.randint(1, 10) == 1:  # 約10%の確率でチェック
-                    try:
-                        if worker_loop.is_closed():
-                            logger.warning("定期チェックでループが閉じられていることを検出。再作成します。")
-                            worker_loop = asyncio.new_event_loop()
-                            last_loop_id = id(worker_loop)
-                            asyncio.set_event_loop(worker_loop)
-                    except Exception as e:
-                        logger.debug(f"定期健全性チェックエラー: {e}")
+                # ループを閉じて、次の反復で新しいループを作成
+                try:
+                    worker_loop.close()
+                except Exception:
+                    pass
+                worker_loop = None
                 continue
             
             # 終了シグナルを検出
@@ -208,123 +171,56 @@ def _log_worker():
             # 処理成功フラグとリトライカウンタをリセット
             processing_success = False
             retry_count = 0
-            max_backoff_time = 5  # 最大バックオフ時間（秒）
             
-            # リトライループ (単純化)
-            while retry_count <= max_retries and not processing_success:
-                try:
-                    # 実行前にループ状態を必ず確認
-                    if worker_loop.is_closed():
-                        logger.warning(f"実行直前にループが閉じられていることを検出 (試行 {retry_count+1})")
-                        worker_loop = asyncio.new_event_loop()
-                        last_loop_id = id(worker_loop)
-                        asyncio.set_event_loop(worker_loop)
-                        logger.debug(f"新しいループを作成しました (ID={last_loop_id})")
-                    
-                    # スプレッドシートに記録する非同期処理を実行
-                    loop_is_ok = True
-                    try:
-                        # まずループチェック用の単純なタスクを実行
-                        worker_loop.run_until_complete(asyncio.sleep(0.01))
-                    except Exception as e:
-                        loop_is_ok = False
-                        logger.warning(f"ループ健全性チェックに失敗: {e}")
-                        # ループの再作成を試みる
-                        worker_loop = asyncio.new_event_loop()
-                        last_loop_id = id(worker_loop)
-                        asyncio.set_event_loop(worker_loop)
-                        logger.debug(f"健全性チェック失敗後に新しいループを作成しました (ID={last_loop_id})")
-                        # 再度健全性チェック
-                        try:
-                            worker_loop.run_until_complete(asyncio.sleep(0.01))
-                            loop_is_ok = True
-                        except Exception as e2:
-                            logger.error(f"2回目のループ健全性チェックに失敗: {e2}")
-                            loop_is_ok = False
-                    
-                    if loop_is_ok:
-                        # 本番の非同期処理を実行
-                        result = worker_loop.run_until_complete(
-                            client.add_thread_log(
-                                user_id=str(user_id),
-                                username=username,
-                                fixed_value=fixed_value,
-                                status=status
-                            )
-                        )
-                        # 成功
-                        processing_success = True
-                        
-                        # 結果を保存
-                        with _client_lock:
-                            _logging_status[user_id] = {
-                                "status": "success" if result else "failed",
-                                "timestamp": datetime.now().isoformat(),
-                                "username": username,
-                                "log_type": status,
-                                "retries": retry_count,
-                                "loop_id": last_loop_id
-                            }
-                        
-                        logger.info(f"スレッドログを記録しました: ID={user_id}, ユーザー={username}, 状態={status}, 結果={result}")
-                    
-                except RuntimeError as e:
-                    # イベントループエラー特有の処理
-                    if "Event loop is closed" in str(e) or "Event loop is running" in str(e):
-                        retry_count += 1
-                        logger.warning(f"イベントループエラー (再試行 {retry_count}/{max_retries}): {e}")
-                        
-                        # 明示的に新しいループを作成
-                        try:
-                            if worker_loop and not worker_loop.is_closed():
-                                worker_loop.close()
-                        except Exception:
-                            pass
-                            
-                        worker_loop = asyncio.new_event_loop()
-                        last_loop_id = id(worker_loop)
-                        asyncio.set_event_loop(worker_loop)
-                        logger.debug(f"新しいループを作成しました (ID={last_loop_id})")
-                        
-                        # バックオフ待機（ランダム要素追加）
-                        jitter = random.uniform(0.8, 1.2)  # ±20%のランダム要素
-                        backoff_time = min(max_backoff_time, (2 ** retry_count) / 2 * jitter)
-                        logger.info(f"再試行前に {backoff_time:.1f}秒待機します...")
-                        time.sleep(backoff_time)
-                    else:
-                        # その他のランタイムエラー
-                        logger.error(f"ランタイムエラー: {e}")
-                        retry_count += 1
-                        time.sleep(1)
+            # スプレッドシートに記録する非同期処理を実行
+            try:
+                # 本番の非同期処理を実行
+                result = worker_loop.run_until_complete(
+                    client.add_thread_log(
+                        user_id=str(user_id),
+                        username=username,
+                        fixed_value=fixed_value,
+                        status=status
+                    )
+                )
+                # 成功
+                processing_success = True
                 
-                except Exception as e:
-                    # その他の例外
-                    retry_count += 1
-                    logger.error(f"ログ記録処理エラー (再試行 {retry_count}/{max_retries}): {e}")
-                    
-                    if retry_count <= max_retries:
-                        # バックオフ待機
-                        backoff_time = min(max_backoff_time, (2 ** retry_count) / 2)
-                        logger.info(f"再試行前に {backoff_time:.1f}秒待機します...")
-                        time.sleep(backoff_time)
+                # 結果を保存
+                with _client_lock:
+                    _logging_status[user_id] = {
+                        "status": "success" if result else "failed",
+                        "timestamp": datetime.now().isoformat(),
+                        "username": username,
+                        "log_type": status,
+                        "retries": retry_count,
+                        "loop_id": last_loop_id
+                    }
+                
+                logger.info(f"スレッドログを記録しました: ID={user_id}, ユーザー={username}, 状態={status}, 結果={result}")
             
-            # 最大再試行回数を超えても失敗した場合
-            if not processing_success:
-                logger.error(f"最大再試行回数({max_retries})を超えました: ID={user_id}, ユーザー={username}")
-                
-                # エラー状態を保存
+            except Exception as e:
+                # エラー処理
+                logger.error(f"ログ記録処理エラー: {e}")
                 with _client_lock:
                     _logging_status[user_id] = {
                         "status": "error",
-                        "error": "最大再試行回数超過",
+                        "error": str(e),
                         "timestamp": datetime.now().isoformat(),
                         "username": username,
                         "log_type": status,
                         "retries": retry_count
                     }
-                
+            
             # タスク完了を通知
             _log_queue.task_done()
+            
+            # ループを閉じて、次の反復で新しいループを作成
+            try:
+                worker_loop.close()
+            except Exception:
+                pass
+            worker_loop = None
                 
         except Exception as e:
             # ワーカーループの最上位例外ハンドラ
@@ -334,31 +230,18 @@ def _log_worker():
             time.sleep(1)
             
             # エラーから回復する試み
-            try:
-                # ワーカーループが問題を抱えている可能性がある場合は、完全にリセット
-                if worker_loop is not None:
-                    try:
-                        worker_loop.close()
-                    except Exception:
-                        pass
-                worker_loop = None  # 次のイテレーションで新しいループが作成される
-                logger.info("エラー回復のためにイベントループをリセットしました")
-            except Exception as reset_err:
-                logger.error(f"エラー回復処理中にさらにエラーが発生: {reset_err}")
+            if worker_loop is not None:
+                try:
+                    worker_loop.close()
+                except Exception:
+                    pass
+            worker_loop = None
     
     # ループを閉じてリソースを解放
     if worker_loop is not None:
         try:
             if not worker_loop.is_closed():
-                # 保留中のタスクを実行
-                pending = asyncio.all_tasks(worker_loop)
-                if pending:
-                    logger.info(f"{len(pending)}個の保留中タスクを終了します")
-                    worker_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                
-                # ループを閉じる
                 worker_loop.close()
-                logger.debug(f"イベントループ(ID={last_loop_id})を正常に閉じました")
         except Exception as e:
             logger.error(f"イベントループ終了時エラー: {e}")
     
