@@ -160,11 +160,11 @@ async def create_thread_from_message(
             # ログを記録（キューに追加するだけなのでブロッキングしない）
             log_result = log_thread_creation(
                 user_id=message.author.id,
-                username=message.author.display_name
+                username=message.author.name
             )
             
             if log_result:
-                logger.debug(f"スレッド作成ログをキューに追加しました: ID={thread.id}, ユーザー={message.author.display_name}")
+                logger.debug(f"スレッド作成ログをキューに追加しました: ID={thread.id}, ユーザー={message.author.name}")
             
         except Exception as e:
             logger.error(f"スプレッドシートログ記録エラー: {e}")
@@ -194,7 +194,7 @@ async def create_thread_from_message(
                 'end_monitoring_time': end_monitoring_time,
                 'auto_archive_duration': auto_archive_duration,
                 'name': name,
-                'author': message.author.display_name,
+                'author': message.author.name,
                 'author_id': message.author.id,  # 作成者IDも保存
                 'monitoring_duration': monitoring_duration
             }
@@ -282,7 +282,7 @@ async def close_thread(
                     if guild:
                         member = guild.get_member(author_id)
                         if member:
-                            username = member.display_name
+                            username = member.name
                             # スプレッドシートロガーを取得（遅延インポート）
                             _, log_thread_close = get_spreadsheet_logger()
                             
