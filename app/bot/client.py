@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-client.py - Discord スレッド自動生成 Bot
+client.py - Discord スレッド自動生成 Bot (シンプル化版)
 """
 
 import discord
@@ -13,8 +13,8 @@ import re
 from config import (
     BOT_CONFIG, TRIGGER_KEYWORDS, THREAD_AUTO_ARCHIVE_DURATION, 
     THREAD_NAME_TEMPLATE, ENABLED_CHANNEL_IDS, ADMIN_USER_IDS, 
-    THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION,IGNORED_BOT_IDS,
-    update_setting, get_editable_settings
+    THREAD_CLOSE_KEYWORDS, THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION,
+    IGNORED_BOT_IDS, DEBUG_MODE
 )
 from bot.thread_handler import (
     should_create_thread, create_thread_from_message,
@@ -76,17 +76,12 @@ class ThreadBot(commands.Bot):
             logger.debug(f"Botからのメッセージを検出: Bot ID={message.author.id}, 無視リスト={IGNORED_BOT_IDS}")
 
             # 型変換を明示的に行って比較
-            author_id_str = str(message.author.id)
+            author_id = message.author.id
 
-            # IGNORED_BOT_IDSをカンマ区切りでリスト化
-            ignored_ids_str = IGNORED_BOT_IDS.split(",") if IGNORED_BOT_IDS else []
-            
-            logger.debug(f"比較: {author_id_str} in {ignored_ids_str} = {author_id_str in ignored_ids_str}")
-            
-            for ignored_id in ignored_ids_str:
-                if author_id_str == ignored_id.strip():
-                    logger.debug(f"無視リストに含まれるBot (ID: {message.author.id}) からのメッセージをスキップします")
-                    return
+            # IGNORED_BOT_IDSがsetなので直接比較
+            if author_id in IGNORED_BOT_IDS:
+                logger.debug(f"無視リストに含まれるBot (ID: {message.author.id}) からのメッセージをスキップします")
+                return
             
         # スレッド作成条件をチェック
         if should_create_thread(message, TRIGGER_KEYWORDS):
@@ -141,61 +136,6 @@ class ThreadBot(commands.Bot):
     def add_commands(self):
         """コマンドを登録"""
         
-        @self.command(name="config", help="Bot設定を表示・変更します")
-        async def config_command(ctx, setting_name: str = None, *, new_value: str = None):
-            # 管理者権限チェック
-            if not self.is_admin(ctx.author):
-                await ctx.send("⚠️ このコマンドは管理者のみ使用できます。")
-                return
-            
-            # 設定名が指定されていない場合は一覧を表示
-            if setting_name is None:
-                await self.show_config_list(ctx)
-                return
-                
-            # 設定名を正規化して編集可能な設定を取得
-            setting_name = setting_name.upper()
-            editable_settings = get_editable_settings()
-            
-            # 存在しない設定の場合
-            if setting_name not in editable_settings:
-                valid_settings = ", ".join(f"`{k}`" for k in editable_settings.keys())
-                await ctx.send(f"⚠️ 無効な設定名です。有効な設定: {valid_settings}")
-                return
-            
-            # 設定情報を取得
-            setting_info = editable_settings[setting_name]
-            
-            # 値表示モード
-            if new_value is None:
-                embed = discord.Embed(
-                    title=f"設定: {setting_name}",
-                    description=setting_info['description'],
-                    color=discord.Color.blue()
-                )
-                
-                # 現在の値をフォーマット
-                value_str = self._format_setting_value(setting_info['current_value'])
-                embed.add_field(name="型", value=setting_info['type'], inline=True)
-                embed.add_field(name="現在の値", value=value_str, inline=True)
-                
-                # 選択肢と説明を追加
-                if setting_info['options']:
-                    embed.add_field(name="選択肢", value=", ".join(str(opt) for opt in setting_info['options']), inline=False)
-                if setting_info.get('help_text'):
-                    embed.add_field(name="ヘルプ", value=setting_info['help_text'], inline=False)
-                
-                await ctx.send(embed=embed)
-                return
-            
-            # 設定更新モード
-            print(update_setting(setting_name, new_value))
-            if update_setting(setting_name, new_value):
-                self._update_global_settings(setting_name, new_value)
-                await self._send_config_update_message(ctx, setting_name, new_value)
-            else:
-                await ctx.send(f"❌ 設定 `{setting_name}` の更新に失敗しました。")
-        
         @self.command(name="bothelp", help="コマンドのヘルプを表示します")
         async def bothelp_command(ctx, command_name: str = None):
             if command_name is None:
@@ -208,12 +148,16 @@ class ThreadBot(commands.Bot):
                 
                 # 基本コマンド一覧
                 commands = {
-                    "!config": "Bot設定を表示・変更します（管理者用）",
                     "!keywords": "トリガーキーワード一覧を表示します",
                     "!channels": "Bot有効チャンネル一覧を表示します",
                     "!closekeywords": "締め切りキーワード一覧を表示します",
+                    "!ignoredbots": "無視するBotの一覧を表示します",
+                    "!settings": "現在の設定を表示します",
                     "!help": "このヘルプを表示します",
                 }
+                
+                if self.is_admin(ctx.author):
+                    commands["!debug"] = "デバッグ情報を表示します（管理者用）"
                 
                 for cmd, desc in commands.items():
                     embed.add_field(name=cmd, value=desc, inline=False)
@@ -232,7 +176,9 @@ class ThreadBot(commands.Bot):
                 if command:
                     await ctx.send(f"**{command.name}**: {command.help}")
                 else:
-                    await ctx.send(f"コマンド `{command_name}` は存在しません。")@self.command(name="keywords", help="現在のトリガーキーワード一覧を表示します")
+                    await ctx.send(f"コマンド `{command_name}` は存在しません。")
+
+        @self.command(name="keywords", help="現在のトリガーキーワード一覧を表示します")
         async def keywords_command(ctx):
             keywords = ", ".join(f"`{kw}`" for kw in TRIGGER_KEYWORDS) if TRIGGER_KEYWORDS else "（なし）"
             embed = discord.Embed(
@@ -241,12 +187,11 @@ class ThreadBot(commands.Bot):
                 color=discord.Color.green()
             )
             
-            if self.is_admin(ctx.author):
-                embed.add_field(
-                    name="変更方法",
-                    value="`!config TRIGGER_KEYWORDS キーワード1,キーワード2`",
-                    inline=False
-                )
+            embed.add_field(
+                name="変更方法",
+                value="設定ファイル（.env）の `TRIGGER_KEYWORDS` を編集してBotを再起動してください",
+                inline=False
+            )
             
             await ctx.send(embed=embed)
         
@@ -264,12 +209,11 @@ class ThreadBot(commands.Bot):
             
             embed = discord.Embed(title="有効チャンネル", description=desc, color=discord.Color.green())
             
-            if self.is_admin(ctx.author):
-                embed.add_field(
-                    name="変更方法",
-                    value="`!config ENABLED_CHANNEL_IDS チャンネルID1,チャンネルID2`\n空にすると全チャンネルで有効",
-                    inline=False
-                )
+            embed.add_field(
+                name="変更方法",
+                value="設定ファイル（.env）の `ENABLED_CHANNEL_IDS` を編集してBotを再起動してください",
+                inline=False
+            )
             
             await ctx.send(embed=embed)
 
@@ -282,13 +226,100 @@ class ThreadBot(commands.Bot):
                 color=discord.Color.green()
             )
             
-            if self.is_admin(ctx.author):
-                embed.add_field(
-                    name="変更方法",
-                    value="`!config THREAD_CLOSE_KEYWORDS キーワード1,キーワード2`",
-                    inline=False
-                )
+            embed.add_field(
+                name="変更方法",
+                value="設定ファイル（.env）の `THREAD_CLOSE_KEYWORDS` を編集してBotを再起動してください",
+                inline=False
+            )
             
+            await ctx.send(embed=embed)
+
+        @self.command(name="ignoredbots", help="無視するBotの一覧を表示します")
+        async def ignoredbots_command(ctx):
+            """無視するBotの一覧を表示するコマンド"""
+            if not IGNORED_BOT_IDS:
+                desc = "無視するBotは設定されていません"
+            else:
+                bot_names = []
+                for bot_id in IGNORED_BOT_IDS:
+                    bot = self.get_user(bot_id)
+                    bot_name = f"{bot.name} (ID:{bot_id})" if bot else f"ID:{bot_id}"
+                    bot_names.append(bot_name)
+                desc = "無視するBot: " + ", ".join(bot_names)
+            
+            embed = discord.Embed(title="無視するBotリスト", description=desc, color=discord.Color.green())
+            
+            embed.add_field(
+                name="変更方法",
+                value="設定ファイル（.env）の `IGNORED_BOT_IDS` を編集してBotを再起動してください",
+                inline=False
+            )
+                
+            # Bot IDの取得方法を説明
+            embed.add_field(
+                name="Bot IDの調べ方",
+                value="1. 開発者モードを有効にする（ユーザー設定→詳細設定）\n"
+                    "2. 対象のBotを右クリックして「IDをコピー」を選択",
+                inline=False
+            )
+            
+            await ctx.send(embed=embed)
+
+        @self.command(name="settings", help="現在の設定を表示します")
+        async def settings_command(ctx):
+            """現在の設定を表示するコマンド"""
+            embed = discord.Embed(
+                title="Bot設定一覧",
+                description="現在の設定値を表示します。設定変更は.envファイルを編集してBotを再起動してください。",
+                color=discord.Color.blue()
+            )
+            
+            # 基本設定
+            embed.add_field(
+                name="🎯 基本設定",
+                value=f"**デバッグモード**: {DEBUG_MODE}\n"
+                      f"**トリガーキーワード**: {', '.join(TRIGGER_KEYWORDS)}\n"
+                      f"**有効チャンネル数**: {len(ENABLED_CHANNEL_IDS) if ENABLED_CHANNEL_IDS else '全チャンネル'}",
+                inline=False
+            )
+            
+            # スレッド設定
+            archive_map = {60: "1時間", 1440: "1日", 4320: "3日", 10080: "1週間"}
+            archive_text = archive_map.get(THREAD_AUTO_ARCHIVE_DURATION, f"{THREAD_AUTO_ARCHIVE_DURATION}分")
+            monitoring_map = {60: "1時間", 180: "3時間", 360: "6時間", 720: "12時間", 
+                             1440: "1日", 4320: "3日", 10080: "1週間", 43200: "1ヶ月"}
+            monitoring_text = monitoring_map.get(THREAD_MONITORING_DURATION, f"{THREAD_MONITORING_DURATION}分")
+            
+            embed.add_field(
+                name="🧵 スレッド設定",
+                value=f"**自動アーカイブ時間**: {archive_text}\n"
+                      f"**監視時間**: {monitoring_text}\n"
+                      f"**スレッド名テンプレート**: `{THREAD_NAME_TEMPLATE}`\n"
+                      f"**締め切り後テンプレート**: `{THREAD_CLOSED_NAME_TEMPLATE}`",
+                inline=False
+            )
+            
+            # スプレッドシート設定
+            from config import (SPREADSHEET_LOGGING_ENABLED, SPREADSHEET_DAILY_LIMIT_ENABLED, 
+                              SPREADSHEET_DAILY_RESET_HOUR, SPREADSHEET_TIMEZONE_OFFSET)
+            
+            if SPREADSHEET_LOGGING_ENABLED:
+                tz_name = "JST" if SPREADSHEET_TIMEZONE_OFFSET == 9 else f"UTC{SPREADSHEET_TIMEZONE_OFFSET:+d}"
+                spreadsheet_info = f"**ログ記録**: 有効\n"
+                if SPREADSHEET_DAILY_LIMIT_ENABLED:
+                    spreadsheet_info += f"**1日1回制限**: 有効 ({tz_name} {SPREADSHEET_DAILY_RESET_HOUR}:00リセット)"
+                else:
+                    spreadsheet_info += f"**1日1回制限**: 無効"
+            else:
+                spreadsheet_info = "**ログ記録**: 無効"
+            
+            embed.add_field(
+                name="📊 スプレッドシート設定",
+                value=spreadsheet_info,
+                inline=False
+            )
+            
+            embed.set_footer(text="設定変更: .envファイルを編集 → Bot再起動")
             await ctx.send(embed=embed)
 
         @self.command(name="debug", help="デバッグ情報を表示します（管理者用）")
@@ -299,7 +330,6 @@ class ThreadBot(commands.Bot):
                 return
                 
             from bot.thread_handler import get_monitored_threads_status, monitored_threads
-            from config import DEBUG_MODE
             
             if not DEBUG_MODE:
                 await ctx.send("⚠️ デバッグモードが無効です。環境変数 `DEBUG_MODE=true` を設定してBotを再起動してください。")
@@ -333,149 +363,6 @@ class ThreadBot(commands.Bot):
                 )
             
             await ctx.send(embed=embed)
-            
-        # ヘルパーメソッド
-        def _format_setting_value(self, value):
-            """設定値を読みやすくフォーマット"""
-            if isinstance(value, (list, set)):
-                return ", ".join(str(item) for item in value) if value else "（なし）"
-            return str(value) if value is not None else "（なし）"
-
-        @self.command(name="ignoredbots", help="無視するBotの一覧を表示します")
-        async def ignoredbots_command(ctx):
-            """無視するBotの一覧を表示するコマンド"""
-            if not IGNORED_BOT_IDS:
-                desc = "無視するBotは設定されていません"
-            else:
-                desc = "無視するBot: " + IGNORED_BOT_IDS
-            
-            embed = discord.Embed(title="無視するBotリスト", description=desc, color=discord.Color.green())
-            
-            if self.is_admin(ctx.author):
-                embed.add_field(
-                    name="変更方法",
-                    value="`!config IGNORED_BOT_IDS BotID1,BotID2`\n例: `!config IGNORED_BOT_IDS 123456789012345678`",
-                    inline=False
-                )
-                
-                # Bot IDの取得方法を説明
-                embed.add_field(
-                    name="Bot IDの調べ方",
-                    value="1. 開発者モードを有効にする（ユーザー設定→詳細設定）\n"
-                        "2. 対象のBotを右クリックして「IDをコピー」を選択",
-                    inline=False
-                )
-            
-            await ctx.send(embed=embed)
-
-
-
-
-    async def show_config_list(self, ctx):
-        """編集可能な設定一覧を表示"""
-        editable_settings = get_editable_settings()
-        
-        embed = discord.Embed(
-            title="Bot設定一覧",
-            description="以下の設定を変更できます。詳細は `!config 設定名` で確認できます。",
-            color=discord.Color.blue()
-        )
-        
-        for name, info in editable_settings.items():
-            # 値を読みやすく整形
-            value_str = self._format_setting_value(info['current_value'])
-            if len(value_str) > 100:
-                value_str = value_str[:97] + "..."
-            
-            # description キーの存在を確認してから使用
-            description = info.get('description', '説明なし')
-            
-            embed.add_field(
-                name=name,
-                value=f"{description}\n**現在の値:** {value_str}",
-                inline=False
-            )
-        
-        embed.set_footer(text="!config <設定名> <新しい値> で設定を変更できます")
-        await ctx.send(embed=embed)
-    
-    def _format_setting_value(self, value):
-        """設定値を読みやすくフォーマット"""
-        if isinstance(value, (list, set)):
-            return ", ".join(str(item) for item in value) if value else "（なし）"
-        return str(value) if value is not None else "（なし）"
-    
-    def _update_global_settings(self, setting_name, new_value):
-        """グローバル設定を更新"""
-        global TRIGGER_KEYWORDS, ENABLED_CHANNEL_IDS, THREAD_AUTO_ARCHIVE_DURATION
-        global THREAD_NAME_TEMPLATE, ADMIN_USER_IDS, THREAD_CLOSE_KEYWORDS
-        global THREAD_CLOSED_NAME_TEMPLATE, THREAD_MONITORING_DURATION
-        
-        # 設定値は config.py の update_setting() で既に適切な型に変換されているため
-        # ここでは単にグローバル変数に代入するだけでOK
-        if setting_name == "TRIGGER_KEYWORDS":
-            TRIGGER_KEYWORDS = new_value
-        elif setting_name == "ENABLED_CHANNEL_IDS":
-            ENABLED_CHANNEL_IDS = new_value
-        elif setting_name == "THREAD_AUTO_ARCHIVE_DURATION":
-            THREAD_AUTO_ARCHIVE_DURATION = new_value
-        elif setting_name == "THREAD_NAME_TEMPLATE":
-            THREAD_NAME_TEMPLATE = new_value
-        elif setting_name == "ADMIN_USER_IDS":
-            ADMIN_USER_IDS = new_value
-        elif setting_name == "THREAD_CLOSE_KEYWORDS":
-            THREAD_CLOSE_KEYWORDS = new_value
-        elif setting_name == "THREAD_CLOSED_NAME_TEMPLATE":
-            THREAD_CLOSED_NAME_TEMPLATE = new_value
-        elif setting_name == "THREAD_MONITORING_DURATION":
-            THREAD_MONITORING_DURATION = new_value
-
-    async def _send_config_update_message(self, ctx, setting_name, new_value):
-        """設定更新メッセージを送信"""
-        if setting_name == "TRIGGER_KEYWORDS":
-            # キーワードリストの整形
-            keywords_list = ", ".join(f"`{kw}`" for kw in TRIGGER_KEYWORDS) if TRIGGER_KEYWORDS else "（なし）"
-            await ctx.send(f"✅ トリガーキーワードを更新しました: {keywords_list}")
-        elif setting_name == "ENABLED_CHANNEL_IDS":
-            if ENABLED_CHANNEL_IDS:
-                channels = []
-                for channel_id in ENABLED_CHANNEL_IDS:
-                    channel = self.get_channel(channel_id)
-                    channel_name = f"#{channel.name}" if channel else f"ID:{channel_id}"
-                    channels.append(channel_name)
-                value_str = ", ".join(channels)
-                await ctx.send(f"✅ 有効なチャンネルを更新しました: {value_str}")
-            else:
-                await ctx.send("✅ すべてのチャンネルで有効になりました")
-        elif setting_name == "THREAD_AUTO_ARCHIVE_DURATION":
-            duration_map = {60: "1時間", 1440: "1日", 4320: "3日", 10080: "1週間"}
-            duration_text = duration_map.get(THREAD_AUTO_ARCHIVE_DURATION, f"{THREAD_AUTO_ARCHIVE_DURATION}分")
-            await ctx.send(f"✅ スレッド自動アーカイブ時間を更新しました: {duration_text}")
-        elif setting_name == "THREAD_NAME_TEMPLATE":
-            example = THREAD_NAME_TEMPLATE.format(username=ctx.author.display_name)
-            await ctx.send(f"✅ スレッド名テンプレートを更新しました: `{THREAD_NAME_TEMPLATE}`\n例: {example}")
-        elif setting_name == "ADMIN_USER_IDS":
-            admins = []
-            for user_id in ADMIN_USER_IDS:
-                user = self.get_user(user_id)
-                user_name = f"{user.name}" if user else f"ID:{user_id}"
-                admins.append(user_name)
-            value_str = ", ".join(admins) if admins else "（なし）"
-            await ctx.send(f"✅ 管理者ユーザーを更新しました: {value_str}")
-        elif setting_name == "THREAD_CLOSE_KEYWORDS":
-            keywords_list = ", ".join(f"`{kw}`" for kw in THREAD_CLOSE_KEYWORDS) if THREAD_CLOSE_KEYWORDS else "（なし）"
-            await ctx.send(f"✅ 締め切りキーワードを更新しました: {keywords_list}")
-        elif setting_name == "THREAD_CLOSED_NAME_TEMPLATE":
-            example = THREAD_CLOSED_NAME_TEMPLATE.format(original_name=f"{ctx.author.display_name}の募集")
-            await ctx.send(f"✅ 締め切り後のスレッド名テンプレートを更新しました: `{THREAD_CLOSED_NAME_TEMPLATE}`\n例: {example}")
-        elif setting_name == "THREAD_MONITORING_DURATION":
-            duration_map = {60: "1時間", 180: "3時間", 360: "6時間", 720: "12時間", 
-                           1440: "1日", 4320: "3日", 10080: "1週間", 43200: "1ヶ月"}
-            duration_text = duration_map.get(THREAD_MONITORING_DURATION, f"{THREAD_MONITORING_DURATION}分")
-            await ctx.send(f"✅ スレッド監視時間を更新しました: {duration_text}")
-        else:
-            await ctx.send(f"✅ 設定 `{setting_name}` を更新しました")
-        
     
     def is_admin(self, user: discord.User) -> bool:
         """ユーザーが管理者権限を持っているか確認"""
@@ -497,13 +384,12 @@ class ThreadBot(commands.Bot):
         # ステータスを設定
         activity = discord.Activity(
             type=discord.ActivityType.watching, 
-            name="メッセージをスレッド化 | !help"
+            name="メッセージをスレッド化 | !bothelp"
         )
         
         await self.change_presence(activity=activity)
         
         # デバッグモードの場合、定期的にスレッド監視状態をログに出力するタスクを開始
-        from config import DEBUG_MODE
         if DEBUG_MODE:
             self.debug_task = asyncio.create_task(self.debug_log_task())
             logger.info("デバッグモード: スレッド監視状態のログ出力タスクを開始しました")
@@ -581,5 +467,3 @@ class ThreadBot(commands.Bot):
         else:
             # 通常チャンネルのメッセージを処理
             await self.process_message(message)
-
-

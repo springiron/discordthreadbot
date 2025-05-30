@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Discord Bot メインエントリーポイント
+Discord Bot メインエントリーポイント - シンプル化版
 """
 
 import asyncio
@@ -20,19 +20,14 @@ except ImportError:
 
 # ボットと設定をインポート
 from bot.client import ThreadBot
-from config import DISCORD_BOT_TOKEN as BOT_TOKEN
+from config import DISCORD_BOT_TOKEN as BOT_TOKEN, SPREADSHEET_LOGGING_ENABLED
 from utils.logger import setup_logger
 
-try:
-    from config import SPREADSHEET_LOGGING_ENABLED
-    spreadsheet_logging_enabled = SPREADSHEET_LOGGING_ENABLED
-except ImportError:
-    spreadsheet_logging_enabled = False
 # メインロガーを設定
 logger = setup_logger("main")
 
 # スプレッドシートログ機能が有効な場合、モジュールを初期化
-if spreadsheet_logging_enabled:
+if SPREADSHEET_LOGGING_ENABLED:
     try:
         from bot.spreadsheet_logger import get_spreadsheet_client
         spreadsheet_client = get_spreadsheet_client()
@@ -42,7 +37,6 @@ if spreadsheet_logging_enabled:
             logger.warning("スプレッドシートログ機能の初期化に失敗しました")
     except ImportError as e:
         logger.warning(f"スプレッドシートログモジュールのインポートに失敗しました: {e}")
-        spreadsheet_logging_enabled = False
 
 # グローバル変数
 bot_instance = None
@@ -58,6 +52,15 @@ def handle_exit(signum, frame):
     shutdown_in_progress = True
     print("終了シグナルを受信しました。終了処理中...")
     logger.info("終了シグナルを受信しました。終了処理中...")
+    
+    # スプレッドシートログ機能の終了処理
+    if SPREADSHEET_LOGGING_ENABLED:
+        try:
+            from bot.spreadsheet_logger import cleanup
+            cleanup()
+            logger.info("スプレッドシートログ機能をクリーンアップしました")
+        except Exception as e:
+            logger.error(f"スプレッドシートログクリーンアップエラー: {e}")
     
     # asyncioのループにタスクを入れて確実に終了するようにする
     if bot_instance and bot_instance.is_ready():
@@ -137,6 +140,15 @@ async def main():
     
     # 終了時のクリーンアップ
     shutdown_in_progress = True
+    
+    # スプレッドシートログ機能の最終クリーンアップ
+    if SPREADSHEET_LOGGING_ENABLED:
+        try:
+            from bot.spreadsheet_logger import cleanup
+            cleanup()
+            logger.info("最終クリーンアップ: スプレッドシートログ機能を終了しました")
+        except Exception as e:
+            logger.error(f"最終クリーンアップエラー: {e}")
 
 # ===============================
 # Bot 実行

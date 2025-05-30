@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ロギング設定と機能を提供するモジュール - 重複ハンドラ問題を修正
-Unicode絵文字処理問題を修正
+ロギング設定と機能を提供するモジュール - シンプル化版
 """
 
 import logging
@@ -12,15 +11,8 @@ import re
 from logging.handlers import RotatingFileHandler
 from typing import Optional, Dict
 
-# 設定が遅延インポートされるため、インポート時の config 参照に頼らず、
-# 必要に応じて実行時に設定を読み込む
-def get_config_values():
-    """config から設定値を取得（循環インポートを避けるため遅延インポート）"""
-    try:
-        from config import LOG_LEVEL, DEBUG_MODE
-        return LOG_LEVEL, DEBUG_MODE
-    except ImportError:
-        return "INFO", False
+# 直接インポート（遅延インポートを廃止）
+from config import LOG_LEVEL, DEBUG_MODE
 
 # ログファイルの保存先
 LOG_DIR = "/app/logs"
@@ -117,9 +109,6 @@ def setup_logger(name: str) -> logging.Logger:
     # すでに初期化済みの場合は既存のロガーを返す
     if name in _initialized_loggers:
         return _initialized_loggers[name]
-    
-    # config から設定値を取得
-    LOG_LEVEL, DEBUG_MODE = get_config_values()
     
     # ロガーを取得
     logger = logging.getLogger(name)
